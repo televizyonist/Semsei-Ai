@@ -384,10 +384,12 @@ export default function App() {
     Output JSON: { "english_prompt": "...", "turkish_explanation": "..." }`;
 
     if (localMode) {
+      logMessage('MODEL', 'Ollama / qwen2.5:7b — prompt üretimi', 'info');
       const text = await generateTextLocal({ prompt: instruction, json: true });
       return JSON.parse(text);
     }
 
+    logMessage('MODEL', 'Gemini / gemini-3-flash-preview — prompt üretimi', 'info');
     const activeKey = getActiveApiKey();
     const ai = new GoogleGenAI({ apiKey: activeKey });
     const response = await ai.models.generateContent({
@@ -496,6 +498,13 @@ export default function App() {
       if (localMode) {
         const sceneBase64 = baseInput?.split(',')[1] ?? undefined;
         const charBase64 = typeof item.charRefImage === 'string' ? item.charRefImage.split(',')[1] : undefined;
+        const hasScene = Boolean(sceneBase64);
+        const hasChar = Boolean(charBase64);
+        const workflowLabel = !hasScene && !hasChar ? 'Workflow A — FLUX.1-dev-fp8'
+          : hasScene && !hasChar ? 'Workflow B — FLUX.1-dev-fp8 + ControlNet'
+          : !hasScene && hasChar ? 'Workflow C — FLUX.1-dev-fp8 + PuLID'
+          : 'Workflow D — FLUX.1-dev-fp8 + ControlNet + PuLID';
+        logMessage('MODEL', `ComfyUI / ${workflowLabel}`, 'info');
         const { imageBase64 } = await generateImageLocal({
           prompt: item.cleanPrompt,
           seed: item.seed,
@@ -504,6 +513,7 @@ export default function App() {
         });
         result = `data:image/png;base64,${imageBase64}`;
       } else {
+        logMessage('MODEL', 'Gemini / gemini-2.5-flash-image', 'info');
         result = await callGeminiAPI(item.cleanPrompt, baseInput, item.charRefImage, abortControllerRef.current.signal);
       }
       
@@ -570,6 +580,7 @@ export default function App() {
   const handleStoryStart = async () => {
     if (!storyText) return;
     logMessage('SENARYO', 'Metin analiz ediliyor...', 'info');
+    logMessage('MODEL', localMode ? 'Ollama / qwen2.5:7b — sahne çıkarımı' : 'Gemini / gemini-3-flash-preview — sahne çıkarımı', 'info');
     
     try {
       const ai = new GoogleGenAI({ apiKey: getActiveApiKey() });
@@ -621,10 +632,12 @@ export default function App() {
       const cinemaPrompt = "Analyze this scene and suggest 10 cinematic camera angles. Output JSON array of objects with shot_type, shot_name_tr, english_prompt, turkish_explanation, is_char_visible, shot_icon.";
       let shots: any[];
       if (localMode) {
+        logMessage('MODEL', 'Ollama / qwen2.5vl:7b — sahne analizi', 'info');
         const imageBase64 = cinemaSceneRef.split(',')[1];
         const raw = await analyzeImageLocal(imageBase64, cinemaPrompt);
         shots = JSON.parse(raw);
       } else {
+        logMessage('MODEL', 'Gemini / gemini-3-flash-preview — sahne analizi', 'info');
         const ai = new GoogleGenAI({ apiKey: getActiveApiKey() });
         const response = await ai.models.generateContent({
           model: 'gemini-3-flash-preview',
@@ -709,9 +722,11 @@ export default function App() {
 
       if (localMode) {
         // 1. Transcribe via Whisper
+        logMessage('MODEL', 'Whisper Large v3 — ses transkripsiyon', 'info');
         const result = await transcribeAudioLocal(audioFile.base64);
         transcript = result.text;
       } else {
+        logMessage('MODEL', 'Gemini / gemini-3-flash-preview — ses transkripsiyon', 'info');
         const ai = new GoogleGenAI({ apiKey: getActiveApiKey() });
         const transResponse = await ai.models.generateContent({
           model: 'gemini-3-flash-preview',
@@ -728,11 +743,13 @@ export default function App() {
       // 2. Scenario
       let scenario: string;
       if (localMode) {
+        logMessage('MODEL', 'Ollama / qwen2.5:7b — senaryo üretimi', 'info');
         scenario = await generateTextLocal({
           prompt: `Create a visual storyboard from this transcript. Output JSON array of scenes. Transcript: ${transcript}`,
           json: true,
         });
       } else {
+        logMessage('MODEL', 'Gemini / gemini-3-flash-preview — senaryo üretimi', 'info');
         const ai = new GoogleGenAI({ apiKey: getActiveApiKey() });
         const scenResponse = await ai.models.generateContent({
           model: 'gemini-3-flash-preview',
@@ -747,12 +764,14 @@ export default function App() {
       // 3. Prompts
       let prompts: string[];
       if (localMode) {
+        logMessage('MODEL', 'Ollama / qwen2.5:7b — prompt listesi üretimi', 'info');
         const raw = await generateTextLocal({
           prompt: `Convert these scenes into English image prompts. Output JSON array of strings. Scenes: ${scenario}`,
           json: true,
         });
         prompts = JSON.parse(raw);
       } else {
+        logMessage('MODEL', 'Gemini / gemini-3-flash-preview — prompt listesi üretimi', 'info');
         const ai = new GoogleGenAI({ apiKey: getActiveApiKey() });
         const promptResponse = await ai.models.generateContent({
           model: 'gemini-3-flash-preview',
@@ -1656,14 +1675,15 @@ export default function App() {
                 <p className="text-zinc-700 italic">Sistem hazır...</p>
               ) : (
                 logs.map(log => (
-                  <div key={log.id} className={cn("flex gap-2 border-l-2 pl-2 py-0.5", 
-                    log.type === 'error' ? "border-red-500 text-red-400 bg-red-500/5" : 
-                    log.type === 'success' ? "border-green-500 text-green-400 bg-green-500/5" : 
+                  <div key={log.id} className={cn("flex gap-2 border-l-2 pl-2 py-0.5",
+                    log.type === 'error' ? "border-red-500 text-red-400 bg-red-500/5" :
+                    log.type === 'success' ? "border-green-500 text-green-400 bg-green-500/5" :
+                    log.sender === 'MODEL' ? "border-violet-500 text-violet-400 bg-violet-500/5" :
                     "border-blue-500 text-blue-400 bg-blue-500/5"
                   )}>
                     <span className="opacity-30 shrink-0">{log.time}</span>
                     <span className="font-bold shrink-0">{log.sender}</span>
-                    <span className="text-zinc-300 break-all">{log.msg}</span>
+                    <span className={cn("break-all", log.sender === 'MODEL' ? "text-violet-300 font-mono text-[9px]" : "text-zinc-300")}>{log.msg}</span>
                   </div>
                 ))
               )}
