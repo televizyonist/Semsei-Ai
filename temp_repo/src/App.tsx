@@ -86,9 +86,6 @@ export default function App() {
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isQueuePaused, setIsQueuePaused] = useState(false);
-  const [isCoolingDown, setIsCoolingDown] = useState(false);
-  const [cooldownProgress, setCooldownProgress] = useState(0);
-  const [cooldownSeconds, setCooldownSeconds] = useState(0);
   const [logs, setLogs] = useState<{ id: string; sender: string; msg: string; type: string; time: string }[]>([]);
   const [isLogsMinimized, setIsLogsMinimized] = useState(true);
   
@@ -144,6 +141,7 @@ export default function App() {
 
   // Cinema State
   const [cinemaSceneRef, setCinemaSceneRef] = useState<string | null>(null);
+  const [cinemaCharRef, setCinemaCharRef] = useState<string | null>(null);
   const [cinemaVarCount, setCinemaVarCount] = useState(1);
   const [cinemaAnalysis, setCinemaAnalysis] = useState<any[]>([]);
   const [isCinemaAnalyzing, setIsCinemaAnalyzing] = useState(false);
@@ -194,31 +192,6 @@ export default function App() {
   const logMessage = (sender: string, msg: string, type = 'info') => {
     const time = new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     setLogs(prev => [{ id: Math.random().toString(36).substr(2, 9), sender, msg, type, time }, ...prev]);
-  };
-
-  const startCooldown = (seconds: number) => {
-    setIsCoolingDown(true);
-    setCooldownProgress(100);
-    setCooldownSeconds(seconds);
-    
-    const startTime = Date.now();
-    const duration = seconds * 1000;
-    
-    const interval = setInterval(() => {
-      const elapsed = Date.now() - startTime;
-      const remaining = Math.max(0, duration - elapsed);
-      const progress = (remaining / duration) * 100;
-      
-      setCooldownProgress(progress);
-      setCooldownSeconds(Math.ceil(remaining / 1000));
-      
-      if (remaining <= 0) {
-        clearInterval(interval);
-        setIsCoolingDown(false);
-        setCooldownProgress(0);
-        setCooldownSeconds(0);
-      }
-    }, 100);
   };
 
   const getActiveApiKey = () => {
@@ -295,81 +268,35 @@ export default function App() {
 
   const callGeminiAPI = async (fullPrompt: string, inputImageBase64: string | null = null, charRefBase64: string | null | boolean = null, signal?: AbortSignal) => {
     const activeKey = getActiveApiKey();
-    const ai = new GoogleGenAI({ apiKey: activeKey });
+    const contentParts: any[] = [{ text: fullPrompt }];
 
-    const modelsToTry = [
-      { name: 'gemini-2.5-flash-image', type: 'gemini' },
-      { name: 'imagen-4.0-generate-001', type: 'imagen' }
-    ];
-
-    let lastError;
-
-    for (let i = 0; i < modelsToTry.length; i++) {
-      const modelInfo = modelsToTry[i];
-      try {
-        if (i > 0) {
-          logMessage('SİSTEM', `Kota dolduğu için alternatif modele geçiliyor: ${modelInfo.name}`, 'info');
-        }
-
-        if (modelInfo.type === 'gemini') {
-          const contentParts: any[] = [{ text: fullPrompt }];
-
-          // Character Ref
-          const effectiveCharRef = (charRefBase64 === false) ? null : (typeof charRefBase64 === 'string' ? charRefBase64 : charRef);
-          if (effectiveCharRef) {
-            let charMime = "image/jpeg";
-            if (effectiveCharRef.startsWith("data:image/png")) charMime = "image/png";
-            contentParts.push({ text: "Character Reference Image:" });
-            contentParts.push({ inlineData: { mimeType: charMime, data: effectiveCharRef.split(',')[1] } });
-          }
-
-          // Scene Ref
-          if (inputImageBase64) {
-            let mimeType = "image/jpeg";
-            if (inputImageBase64.startsWith("data:image/png")) mimeType = "image/png";
-            contentParts.push({ text: "Scene/Composition Reference Image:" });
-            contentParts.push({ inlineData: { mimeType: mimeType, data: inputImageBase64.split(',')[1] } });
-          }
-
-          const response = await ai.models.generateContent({
-            model: modelInfo.name,
-            contents: { parts: contentParts },
-            config: { responseModalities: ['IMAGE'] },
-          });
-
-          const base64Data = response.candidates?.[0]?.content?.parts?.find(p => p.inlineData)?.inlineData?.data;
-          if (!base64Data) throw new Error("Görsel verisi alınamadı.");
-          return `data:image/png;base64,${base64Data}`;
-        } else if (modelInfo.type === 'imagen') {
-          // Imagen fallback
-          const response = await ai.models.generateImages({
-              model: modelInfo.name,
-              prompt: fullPrompt,
-              config: {
-                numberOfImages: 1,
-                outputMimeType: 'image/jpeg',
-                aspectRatio: '1:1',
-              },
-          });
-          const base64Data = response.generatedImages?.[0]?.image?.imageBytes;
-          if (!base64Data) throw new Error("Görsel verisi alınamadı.");
-          return `data:image/jpeg;base64,${base64Data}`;
-        }
-      } catch (err: any) {
-        lastError = err;
-        if (err.name === 'AbortError') throw err;
-        
-        // Hata ne olursa olsun (kota, server hatası vs.) bir sonraki modele geç
-        if (i < modelsToTry.length - 1) {
-          console.warn(`Model ${modelInfo.name} başarısız oldu, alternatif deneniyor... Hata:`, err.message || err);
-          continue;
-        }
-        
-        throw err;
-      }
+    // Character Ref
+    const effectiveCharRef = (charRefBase64 === false) ? null : (typeof charRefBase64 === 'string' ? charRefBase64 : charRef);
+    if (effectiveCharRef) {
+      let charMime = "image/jpeg";
+      if (effectiveCharRef.startsWith("data:image/png")) charMime = "image/png";
+      contentParts.push({ text: "Character Reference Image:" });
+      contentParts.push({ inlineData: { mimeType: charMime, data: effectiveCharRef.split(',')[1] } });
     }
-    
-    throw lastError;
+
+    // Scene Ref
+    if (inputImageBase64) {
+      let mimeType = "image/jpeg";
+      if (inputImageBase64.startsWith("data:image/png")) mimeType = "image/png";
+      contentParts.push({ text: "Scene/Composition Reference Image:" });
+      contentParts.push({ inlineData: { mimeType: mimeType, data: inputImageBase64.split(',')[1] } });
+    }
+
+    const ai = new GoogleGenAI({ apiKey: activeKey });
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash-image',
+      contents: { parts: contentParts },
+      config: { responseModalities: ['IMAGE'] },
+    });
+
+    const base64Data = response.candidates?.[0]?.content?.parts?.find(p => p.inlineData)?.inlineData?.data;
+    if (!base64Data) throw new Error("Görsel verisi alınamadı.");
+    return `data:image/png;base64,${base64Data}`;
   };
 
   const fetchPromptFromGemini = async (dreamText: string, personaKey: string) => {
@@ -458,7 +385,7 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (!isProcessing && !isQueuePaused && !isCoolingDown) {
+    if (!isProcessing && !isQueuePaused) {
       const nextItem = imageQueue.find(i => i.status === 'pending');
       if (nextItem) {
         processItem(nextItem);
@@ -468,7 +395,7 @@ export default function App() {
         }
       }
     }
-  }, [imageQueue, isProcessing, isQueuePaused, isCoolingDown]);
+  }, [imageQueue, isProcessing, isQueuePaused]);
 
   const processItem = async (item: QueueItem) => {
     setIsProcessing(true);
@@ -488,13 +415,14 @@ export default function App() {
       setImageQueue(prev => prev.map(i => i.id === item.id ? { ...i, status: 'completed', resultBase64: result } : i));
       logMessage('BAŞARI', `"${item.displayName}" tamamlandı.`, 'success');
 
+      // Add a delay to avoid quota limits when processing multiple items
+      await new Promise(resolve => setTimeout(resolve, 3000));
+
       // Auto Style Transfer
       if (item.styleConfig) {
         const stylePrompt = `Apply ${item.styleConfig.prompt} style to the provided image. Maintain the original content: ${item.originalPromptText}`;
         createQueueItem(stylePrompt, `${item.displayName} (Stilize)`, { mode: 'direct' }, item.meta, false, { refImage: result });
       }
-
-      startCooldown(12); // 12 saniye bekleme süresi
 
     } catch (err: any) {
       if (err.name === 'AbortError') {
@@ -504,9 +432,6 @@ export default function App() {
         if (err.message?.includes('429') || err.message?.includes('quota') || err.message?.includes('RESOURCE_EXHAUSTED')) {
           errorMsg = "Kota doldu. Lütfen kendi API anahtarınızı seçin.";
           logMessage('SİSTEM', "Kota aşımı! Ücretli bir proje anahtarı seçmeniz önerilir.", 'error');
-          startCooldown(30); // Hata durumunda daha uzun bekle
-        } else {
-          startCooldown(5);
         }
         setImageQueue(prev => prev.map(i => i.id === item.id ? { ...i, status: 'error', errorMsg: errorMsg } : i));
         logMessage('HATA', errorMsg, 'error');
@@ -615,7 +540,7 @@ export default function App() {
   const handleCinemaStart = () => {
     const shots = cinemaAnalysis.filter((_, i) => selectedCinemaShots.includes(i));
     shots.forEach((s, idx) => {
-      createQueueItem(s.english_prompt, `🎬 ${s.shot_name_tr}`, { isCinemaMode: true }, { turkish_explanation: s.turkish_explanation }, idx === 0, { refImage: cinemaSceneRef });
+      createQueueItem(s.english_prompt, `🎬 ${s.shot_name_tr}`, { isCinemaMode: true }, { turkish_explanation: s.turkish_explanation }, idx === 0, { refImage: cinemaSceneRef, charRefImage: cinemaCharRef });
     });
   };
 
@@ -798,32 +723,6 @@ export default function App() {
             ))
           )}
         </div>
-
-        {/* COOLDOWN PROGRESS */}
-        <AnimatePresence>
-          {isCoolingDown && (
-            <motion.div 
-              initial={{ height: 0, opacity: 0 }}
-              animate={{ height: 'auto', opacity: 1 }}
-              exit={{ height: 0, opacity: 0 }}
-              className="px-3 pb-3 border-t border-white/5 bg-black/20 pt-3"
-            >
-              <div className="flex justify-between items-center mb-2">
-                <span className="text-[10px] font-bold text-yellow-500 uppercase tracking-widest flex items-center gap-2">
-                  <Loader2 className="w-3 h-3 animate-spin" /> Kota Beklemesi
-                </span>
-                <span className="text-[10px] font-mono text-zinc-400">{cooldownSeconds}s</span>
-              </div>
-              <div className="h-1.5 w-full bg-black rounded-full overflow-hidden border border-white/5">
-                <motion.div 
-                  className="h-full bg-yellow-500"
-                  style={{ width: `${cooldownProgress}%` }}
-                  transition={{ duration: 0.1 }}
-                />
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
 
         {/* API KEY */}
         <div className="p-3 border-t border-white/5 bg-black/20 space-y-3">
@@ -1417,8 +1316,8 @@ export default function App() {
 
             {activeTab === 'cinema' && (
               <div className="space-y-6">
-                {/* Refs */}
-                <div className="grid grid-cols-1 gap-4">
+                {/* Refs — Manuel ile aynı 2 col grid */}
+                <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-3">
                     <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Sahne Ref</label>
                     <div className="aspect-square rounded-xl border border-white/10 bg-black/50 overflow-hidden relative group">
@@ -1433,6 +1332,24 @@ export default function App() {
                         <label className="w-full h-full flex flex-col items-center justify-center cursor-pointer hover:bg-white/5 transition-all">
                           <Camera className="w-6 h-6 text-zinc-700" />
                           <input type="file" accept="image/*" className="hidden" onChange={(e) => { const file = e.target.files?.[0]; if (file) { const r = new FileReader(); r.onload = (ev) => setCinemaSceneRef(ev.target?.result as string); r.readAsDataURL(file); }}} />
+                        </label>
+                      )}
+                    </div>
+                  </div>
+                  <div className="space-y-3">
+                    <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Karakter Ref</label>
+                    <div className="aspect-square rounded-xl border border-white/10 bg-black/50 overflow-hidden relative group">
+                      {cinemaCharRef ? (
+                        <>
+                          <img src={cinemaCharRef} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                          <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                            <button onClick={() => setCinemaCharRef(null)} className="p-2 bg-red-500 rounded-lg text-white"><X className="w-4 h-4" /></button>
+                          </div>
+                        </>
+                      ) : (
+                        <label className="w-full h-full flex flex-col items-center justify-center cursor-pointer hover:bg-white/5 transition-all">
+                          <Plus className="w-6 h-6 text-zinc-700" />
+                          <input type="file" accept="image/*" className="hidden" onChange={(e) => { const file = e.target.files?.[0]; if (file) { const r = new FileReader(); r.onload = (ev) => setCinemaCharRef(ev.target?.result as string); r.readAsDataURL(file); }}} />
                         </label>
                       )}
                     </div>
@@ -2007,7 +1924,25 @@ export default function App() {
                         )}
                       </div>
                     </div>
-                    <div className="grid grid-cols-1 gap-3">
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Karakter Ref</label>
+                        <div className="aspect-square rounded-xl border border-white/10 bg-black/50 overflow-hidden relative group">
+                          {cinemaCharRef ? (
+                            <>
+                              <img src={cinemaCharRef} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                              <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                <button onClick={() => setCinemaCharRef(null)} className="p-2 bg-red-500 rounded-lg"><X className="w-4 h-4" /></button>
+                              </div>
+                            </>
+                          ) : (
+                            <label className="w-full h-full flex flex-col items-center justify-center cursor-pointer hover:bg-white/5 transition-all">
+                              <Plus className="w-5 h-5 text-zinc-700" />
+                              <input type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) { const r = new FileReader(); r.onload = (ev) => setCinemaCharRef(ev.target?.result as string); r.readAsDataURL(f); }}} />
+                            </label>
+                          )}
+                        </div>
+                      </div>
                       <div className="space-y-2">
                         <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Varyasyon</label>
                         <input type="number" value={cinemaVarCount} onChange={(e) => setCinemaVarCount(Number(e.target.value))} min={1} max={5}
