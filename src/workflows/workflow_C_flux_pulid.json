@@ -1,8 +1,9 @@
 {
   "1": {
-    "class_type": "UnetLoaderGGUF",
+    "class_type": "UNETLoader",
     "inputs": {
-      "unet_name": "flux1-dev-Q8_0.gguf"
+      "unet_name": "flux1-dev-fp8.safetensors",
+      "weight_dtype": "fp8_e4m3fn"
     }
   },
   "2": {
@@ -28,7 +29,8 @@
   "5": {
     "class_type": "PulidFluxModelLoader",
     "inputs": {
-      "pulid_file": "pulid_flux_v0.9.1.safetensors"
+      "pulid_file": "pulid_flux_v0.9.1.safetensors",
+      "eva_clip_path": "EVA02_CLIP_L_336_psz14_s6B.pt"
     }
   },
   "6": {
