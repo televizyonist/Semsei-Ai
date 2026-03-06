@@ -37,9 +37,9 @@ export interface TranscribeResult {
 
 // --- Constants ---
 
-const COMFY_URL = 'http://localhost:8188';
-const OLLAMA_URL = 'http://localhost:11434';
-const WHISPER_URL = 'http://localhost:9000';
+const COMFY_URL = '/comfy';
+const OLLAMA_URL = '/ollama';
+const WHISPER_URL = '/whisper';
 const TEXT_MODEL = 'qwen2.5:7b';
 const VISION_MODEL = 'qwen2.5vl:7b';
 
