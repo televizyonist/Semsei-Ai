@@ -76,6 +76,7 @@ interface QueueItem {
   groupId: string | null;
   groupName: string | null;
   aspectRatio: string;
+  hasRealSceneRef: boolean;
   errorMsg?: string;
 }
 
@@ -416,6 +417,8 @@ export default function App() {
 
     if (meta && meta.is_main_char_present === false) useCharRef = null;
 
+    const hasRealSceneRef = Boolean(useSceneRef);
+
     if (!useSceneRef && effectiveAspectRatio && effectiveAspectRatio !== 'native') {
       useSceneRef = createBlankCanvas(effectiveAspectRatio);
     }
@@ -461,7 +464,8 @@ export default function App() {
       styleName: effStyle ? "Stil" : "Yok",
       groupId: settings.groupId || null,
       groupName: settings.groupName || null,
-      aspectRatio: effectiveAspectRatio
+      aspectRatio: effectiveAspectRatio,
+      hasRealSceneRef,
     };
 
     setImageQueue(prev => [item, ...prev]);
@@ -496,7 +500,7 @@ export default function App() {
 
       let result: string;
       if (localMode) {
-        const sceneBase64 = baseInput?.split(',')[1] ?? undefined;
+        const sceneBase64 = item.hasRealSceneRef ? (baseInput?.split(',')[1] ?? undefined) : undefined;
         const charBase64 = typeof item.charRefImage === 'string' ? item.charRefImage.split(',')[1] : undefined;
         const hasScene = Boolean(sceneBase64);
         const hasChar = Boolean(charBase64);
