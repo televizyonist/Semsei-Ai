@@ -37,6 +37,7 @@ import JSZip from 'jszip';
 import * as mammoth from 'mammoth';
 import * as pdfjsLib from 'pdfjs-dist';
 import { PERSONAS, STYLES } from './constants';
+import { generateImageLocal, generateTextLocal, analyzeImageLocal, transcribeAudioLocal } from './server/localAI';
 
 // PDF.js Worker Setup
 pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
@@ -124,6 +125,9 @@ export default function App() {
 
   // Expanded tab state
   const [expandedTab, setExpandedTab] = useState<'manual' | 'story' | 'audio' | 'cinema' | null>(null);
+
+  // Local AI mode
+  const [localMode, setLocalMode] = useState(() => localStorage.getItem('localMode') === 'true');
 
   // Story State
   const [storyText, setStoryText] = useState<string | null>(null);
@@ -373,13 +377,18 @@ export default function App() {
   };
 
   const fetchPromptFromGemini = async (dreamText: string, personaKey: string) => {
-    const activeKey = getActiveApiKey();
     const personaPrompt = personaKey ? (Object.values(PERSONAS).flatMap(c => Object.entries(c)).find(([k]) => k === personaKey)?.[1] as any)?.prompt : "Standard visual interpretation.";
 
-    const instruction = `You are an expert prompt engineer. User Input: "${dreamText}" ${personaPrompt} 
+    const instruction = `You are an expert prompt engineer. User Input: "${dreamText}" ${personaPrompt}
     Task: Convert into high-quality Stable Diffusion style prompt in English and Turkish explanation.
     Output JSON: { "english_prompt": "...", "turkish_explanation": "..." }`;
 
+    if (localMode) {
+      const text = await generateTextLocal({ prompt: instruction, json: true });
+      return JSON.parse(text);
+    }
+
+    const activeKey = getActiveApiKey();
     const ai = new GoogleGenAI({ apiKey: activeKey });
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
@@ -483,7 +492,20 @@ export default function App() {
         baseInput = await prepareCanvasWithRatio(baseInput, item.aspectRatio);
       }
 
-      const result = await callGeminiAPI(item.cleanPrompt, baseInput, item.charRefImage, abortControllerRef.current.signal);
+      let result: string;
+      if (localMode) {
+        const sceneBase64 = baseInput?.split(',')[1] ?? undefined;
+        const charBase64 = typeof item.charRefImage === 'string' ? item.charRefImage.split(',')[1] : undefined;
+        const { imageBase64 } = await generateImageLocal({
+          prompt: item.cleanPrompt,
+          seed: item.seed,
+          sceneRefBase64: sceneBase64,
+          charRefBase64: charBase64,
+        });
+        result = `data:image/png;base64,${imageBase64}`;
+      } else {
+        result = await callGeminiAPI(item.cleanPrompt, baseInput, item.charRefImage, abortControllerRef.current.signal);
+      }
       
       setImageQueue(prev => prev.map(i => i.id === item.id ? { ...i, status: 'completed', resultBase64: result } : i));
       logMessage('BAŞARI', `"${item.displayName}" tamamlandı.`, 'success');
@@ -596,13 +618,21 @@ export default function App() {
     if (!cinemaSceneRef) return;
     setIsCinemaAnalyzing(true);
     try {
-      const ai = new GoogleGenAI({ apiKey: getActiveApiKey() });
-      const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: "Analyze this scene and suggest 10 cinematic camera angles. Output JSON array of objects with shot_type, shot_name_tr, english_prompt, turkish_explanation, is_char_visible, shot_icon.",
-        config: { responseMimeType: "application/json" }
-      });
-      const shots = JSON.parse(response.text || '[]');
+      const cinemaPrompt = "Analyze this scene and suggest 10 cinematic camera angles. Output JSON array of objects with shot_type, shot_name_tr, english_prompt, turkish_explanation, is_char_visible, shot_icon.";
+      let shots: any[];
+      if (localMode) {
+        const imageBase64 = cinemaSceneRef.split(',')[1];
+        const raw = await analyzeImageLocal(imageBase64, cinemaPrompt);
+        shots = JSON.parse(raw);
+      } else {
+        const ai = new GoogleGenAI({ apiKey: getActiveApiKey() });
+        const response = await ai.models.generateContent({
+          model: 'gemini-3-flash-preview',
+          contents: cinemaPrompt,
+          config: { responseMimeType: "application/json" }
+        });
+        shots = JSON.parse(response.text || '[]');
+      }
       setCinemaAnalysis(shots);
       setSelectedCinemaShots(shots.map((_: any, i: number) => i));
     } catch (err: any) {
@@ -675,47 +705,78 @@ export default function App() {
     setAudioStepStatus(prev => ({ ...prev, 2: 'processing' }));
     
     try {
-      const ai = new GoogleGenAI({ apiKey: getActiveApiKey() });
-      
-      // 1. Transcribe
-      const transResponse = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: [
-          { text: 'Transcribe this audio file accurately. Label speakers.' },
-          { inlineData: { mimeType: audioFile.mimeType, data: audioFile.base64 } }
-        ]
-      });
-      const transcript = transResponse.text || '';
+      let transcript: string;
+
+      if (localMode) {
+        // 1. Transcribe via Whisper
+        const result = await transcribeAudioLocal(audioFile.base64);
+        transcript = result.text;
+      } else {
+        const ai = new GoogleGenAI({ apiKey: getActiveApiKey() });
+        const transResponse = await ai.models.generateContent({
+          model: 'gemini-3-flash-preview',
+          contents: [
+            { text: 'Transcribe this audio file accurately. Label speakers.' },
+            { inlineData: { mimeType: audioFile.mimeType, data: audioFile.base64 } }
+          ]
+        });
+        transcript = transResponse.text || '';
+      }
       setAudioTranscript(transcript);
       setAudioStepStatus(prev => ({ ...prev, 2: 'done', 3: 'processing' }));
 
       // 2. Scenario
-      const scenResponse = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: `Create a visual storyboard from this transcript. Output JSON array of scenes. Transcript: ${transcript}`,
-        config: { responseMimeType: "application/json" }
-      });
-      const scenario = scenResponse.text || '';
+      let scenario: string;
+      if (localMode) {
+        scenario = await generateTextLocal({
+          prompt: `Create a visual storyboard from this transcript. Output JSON array of scenes. Transcript: ${transcript}`,
+          json: true,
+        });
+      } else {
+        const ai = new GoogleGenAI({ apiKey: getActiveApiKey() });
+        const scenResponse = await ai.models.generateContent({
+          model: 'gemini-3-flash-preview',
+          contents: `Create a visual storyboard from this transcript. Output JSON array of scenes. Transcript: ${transcript}`,
+          config: { responseMimeType: "application/json" }
+        });
+        scenario = scenResponse.text || '';
+      }
       setAudioScenario(scenario);
       setAudioStepStatus(prev => ({ ...prev, 3: 'done', 4: 'processing' }));
 
       // 3. Prompts
-      const promptResponse = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: `Convert these scenes into English image prompts. Output JSON array of strings. Scenes: ${scenario}`,
-        config: { responseMimeType: "application/json" }
-      });
-      const prompts = JSON.parse(promptResponse.text || '[]');
+      let prompts: string[];
+      if (localMode) {
+        const raw = await generateTextLocal({
+          prompt: `Convert these scenes into English image prompts. Output JSON array of strings. Scenes: ${scenario}`,
+          json: true,
+        });
+        prompts = JSON.parse(raw);
+      } else {
+        const ai = new GoogleGenAI({ apiKey: getActiveApiKey() });
+        const promptResponse = await ai.models.generateContent({
+          model: 'gemini-3-flash-preview',
+          contents: `Convert these scenes into English image prompts. Output JSON array of strings. Scenes: ${scenario}`,
+          config: { responseMimeType: "application/json" }
+        });
+        prompts = JSON.parse(promptResponse.text || '[]');
+      }
       setAudioPrompts(prompts);
       setAudioStepStatus(prev => ({ ...prev, 4: 'done', 5: 'processing' }));
 
       // 4. Images
       const images: string[] = [];
       for (const p of prompts) {
-        const img = await callGeminiAPI(p);
+        let img: string;
+        if (localMode) {
+          const { imageBase64 } = await generateImageLocal({ prompt: p });
+          img = `data:image/png;base64,${imageBase64}`;
+        } else {
+          img = await callGeminiAPI(p);
+        }
         images.push(img);
         setAudioImages([...images]);
-        createQueueItem(p, `🎵 Audio Scene ${images.length}`, {}, { source_text: "Audio Pipeline" }, false);
+        createQueueItem(p, `Audio Scene ${images.length}`, {}, { source_text: "Audio Pipeline" }, false);
       }
       setAudioStepStatus(prev => ({ ...prev, 5: 'done' }));
 
@@ -825,23 +886,56 @@ export default function App() {
           )}
         </AnimatePresence>
 
-        {/* API KEY */}
+        {/* API KEY / LOCAL MODE */}
         <div className="p-3 border-t border-white/5 bg-black/20 space-y-3">
-          {!hasSelectedKey && (
-            <button 
-              onClick={handleOpenKeySelector}
-              className="w-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 rounded-lg px-3 py-2 text-[10px] font-bold uppercase tracking-widest hover:bg-emerald-500/20 transition-all flex items-center justify-center gap-2"
-            >
-              <Sparkles className="w-3 h-3" /> Ücretli API Anahtarı Seç
-            </button>
+          {/* Local Mode Toggle */}
+          <button
+            onClick={() => {
+              const next = !localMode;
+              setLocalMode(next);
+              localStorage.setItem('localMode', String(next));
+            }}
+            className={cn(
+              "w-full rounded-lg px-3 py-2 text-[10px] font-bold uppercase tracking-widest transition-all flex items-center justify-between gap-2 border",
+              localMode
+                ? "bg-violet-500/20 border-violet-500/50 text-violet-300"
+                : "bg-black/30 border-white/10 text-zinc-500 hover:border-white/20"
+            )}
+          >
+            <span className="flex items-center gap-2">
+              <Monitor className="w-3 h-3" />
+              {localMode ? "Lokal Mod Aktif" : "Bulut Modu Aktif"}
+            </span>
+            <span className={cn(
+              "w-7 h-4 rounded-full relative transition-colors",
+              localMode ? "bg-violet-500" : "bg-zinc-700"
+            )}>
+              <span className={cn(
+                "absolute top-0.5 w-3 h-3 rounded-full bg-white transition-transform",
+                localMode ? "translate-x-3.5" : "translate-x-0.5"
+              )} />
+            </span>
+          </button>
+
+          {!localMode && (
+            <>
+              {!hasSelectedKey && (
+                <button
+                  onClick={handleOpenKeySelector}
+                  className="w-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 rounded-lg px-3 py-2 text-[10px] font-bold uppercase tracking-widest hover:bg-emerald-500/20 transition-all flex items-center justify-center gap-2"
+                >
+                  <Sparkles className="w-3 h-3" /> Ücretli API Anahtarı Seç
+                </button>
+              )}
+              <input
+                type="password"
+                placeholder="Manuel API Key (Opsiyonel)..."
+                value={customApiKey}
+                onChange={(e) => setCustomApiKey(e.target.value)}
+                className="w-full bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-[10px] focus:outline-none focus:border-emerald-500 transition-colors"
+              />
+            </>
           )}
-          <input 
-            type="password" 
-            placeholder="Manuel API Key (Opsiyonel)..." 
-            value={customApiKey}
-            onChange={(e) => setCustomApiKey(e.target.value)}
-            className="w-full bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-[10px] focus:outline-none focus:border-emerald-500 transition-colors"
-          />
         </div>
       </div>
 
