@@ -37,7 +37,7 @@ import JSZip from 'jszip';
 import * as mammoth from 'mammoth';
 import * as pdfjsLib from 'pdfjs-dist';
 import { PERSONAS, STYLES } from './constants';
-import { generateImageLocal, generateTextLocal, analyzeImageLocal, transcribeAudioLocal } from './server/localAI';
+
 
 // PDF.js Worker Setup
 pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
@@ -76,8 +76,6 @@ interface QueueItem {
   groupId: string | null;
   groupName: string | null;
   aspectRatio: string;
-  styleText: string;
-  hasRealSceneRef: boolean;
   errorMsg?: string;
 }
 
@@ -89,9 +87,6 @@ export default function App() {
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isQueuePaused, setIsQueuePaused] = useState(false);
-  const [isCoolingDown, setIsCoolingDown] = useState(false);
-  const [cooldownProgress, setCooldownProgress] = useState(0);
-  const [cooldownSeconds, setCooldownSeconds] = useState(0);
   const [logs, setLogs] = useState<{ id: string; sender: string; msg: string; type: string; time: string }[]>([]);
   const [isLogsMinimized, setIsLogsMinimized] = useState(true);
   
@@ -128,8 +123,7 @@ export default function App() {
   // Expanded tab state
   const [expandedTab, setExpandedTab] = useState<'manual' | 'story' | 'audio' | 'cinema' | null>(null);
 
-  // Local AI mode
-  const [localMode, setLocalMode] = useState(() => localStorage.getItem('localMode') === 'true');
+
 
   // Story State
   const [storyText, setStoryText] = useState<string | null>(null);
@@ -176,7 +170,7 @@ export default function App() {
   const abortControllerRef = useRef<AbortController | null>(null);
   const maskCanvasRef = useRef<HTMLCanvasElement>(null);
   const faceCanvasRef = useRef<HTMLCanvasElement>(null);
-  const audioPlayerRef = useRef<HTMLAudioElement>(null);
+
 
   useEffect(() => {
     const checkKey = async () => {
@@ -200,31 +194,6 @@ export default function App() {
   const logMessage = (sender: string, msg: string, type = 'info') => {
     const time = new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     setLogs(prev => [{ id: Math.random().toString(36).substr(2, 9), sender, msg, type, time }, ...prev]);
-  };
-
-  const startCooldown = (seconds: number) => {
-    setIsCoolingDown(true);
-    setCooldownProgress(100);
-    setCooldownSeconds(seconds);
-    
-    const startTime = Date.now();
-    const duration = seconds * 1000;
-    
-    const interval = setInterval(() => {
-      const elapsed = Date.now() - startTime;
-      const remaining = Math.max(0, duration - elapsed);
-      const progress = (remaining / duration) * 100;
-      
-      setCooldownProgress(progress);
-      setCooldownSeconds(Math.ceil(remaining / 1000));
-      
-      if (remaining <= 0) {
-        clearInterval(interval);
-        setIsCoolingDown(false);
-        setCooldownProgress(0);
-        setCooldownSeconds(0);
-      }
-    }, 100);
   };
 
   const getActiveApiKey = () => {
@@ -385,12 +354,6 @@ export default function App() {
     Task: Convert into high-quality Stable Diffusion style prompt in English and Turkish explanation.
     Output JSON: { "english_prompt": "...", "turkish_explanation": "..." }`;
 
-    if (localMode) {
-      logMessage('MODEL', 'Ollama / qwen2.5:7b — prompt üretimi', 'info');
-      const text = await generateTextLocal({ prompt: instruction, json: true });
-      return JSON.parse(text);
-    }
-
     logMessage('MODEL', 'Gemini / gemini-3-flash-preview — prompt üretimi', 'info');
     const activeKey = getActiveApiKey();
     const ai = new GoogleGenAI({ apiKey: activeKey });
@@ -417,8 +380,6 @@ export default function App() {
     let useCharRef = overrideRefs ? overrideRefs.charRefImage : charRef;
 
     if (meta && meta.is_main_char_present === false) useCharRef = null;
-
-    const hasRealSceneRef = Boolean(useSceneRef);
 
     if (!useSceneRef && effectiveAspectRatio && effectiveAspectRatio !== 'native') {
       useSceneRef = createBlankCanvas(effectiveAspectRatio);
@@ -463,11 +424,9 @@ export default function App() {
       styleConfig: (effectiveMode === 'flow' && effStyle) ? { prompt: effStyle, name: "Flow Style" } : null,
       isStyled: false,
       styleName: effStyle ? "Stil" : "Yok",
-      styleText: effStyle || '',
       groupId: settings.groupId || null,
       groupName: settings.groupName || null,
       aspectRatio: effectiveAspectRatio,
-      hasRealSceneRef,
     };
 
     setImageQueue(prev => [item, ...prev]);
@@ -475,7 +434,7 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (!isProcessing && !isQueuePaused && !isCoolingDown) {
+    if (!isProcessing && !isQueuePaused) {
       const nextItem = imageQueue.find(i => i.status === 'pending');
       if (nextItem) {
         processItem(nextItem);
@@ -485,7 +444,7 @@ export default function App() {
         }
       }
     }
-  }, [imageQueue, isProcessing, isQueuePaused, isCoolingDown]);
+  }, [imageQueue, isProcessing, isQueuePaused]);
 
   const processItem = async (item: QueueItem) => {
     setIsProcessing(true);
@@ -500,54 +459,8 @@ export default function App() {
         baseInput = await prepareCanvasWithRatio(baseInput, item.aspectRatio);
       }
 
-      let result: string;
-      if (localMode) {
-        const sceneBase64 = item.hasRealSceneRef ? (baseInput?.split(',')[1] ?? undefined) : undefined;
-        const charBase64 = typeof item.charRefImage === 'string' ? item.charRefImage.split(',')[1] : undefined;
-        const hasScene = Boolean(sceneBase64);
-        const hasChar = Boolean(charBase64);
-        const workflowLabel = !hasScene && !hasChar ? 'Workflow A — FLUX.1-schnell-fp8'
-          : hasScene && !hasChar ? 'Workflow B — FLUX.1-schnell-fp8 + ControlNet'
-          : !hasScene && hasChar ? 'Workflow C — FLUX.1-schnell-fp8 + PuLID'
-          : 'Workflow D — FLUX.1-schnell-fp8 + ControlNet + PuLID';
-        logMessage('MODEL', `ComfyUI / ${workflowLabel}`, 'info');
-
-        // Build clean FLUX prompt (no Gemini-specific instruction prefixes)
-        const localPrompt = [item.originalPromptText, item.styleText].filter(Boolean).join(', ');
-
-        // Compute image dimensions from aspect ratio
-        let imgWidth = 1024, imgHeight = 1024;
-        const arStr = item.aspectRatio;
-        if (arStr && arStr !== 'native') {
-          if (arStr.startsWith('manual:')) {
-            const p = arStr.split(':');
-            imgWidth = parseInt(p[1]) || 1024;
-            imgHeight = parseInt(p[2]) || 1024;
-          } else {
-            const ratio = parseRatio(arStr);
-            if (ratio) {
-              if (ratio > 1) { imgWidth = Math.round(1024 * ratio); imgHeight = 1024; }
-              else { imgWidth = 1024; imgHeight = Math.round(1024 / ratio); }
-            }
-          }
-          // Round to nearest 64 (FLUX requirement)
-          imgWidth = Math.round(imgWidth / 64) * 64;
-          imgHeight = Math.round(imgHeight / 64) * 64;
-        }
-
-        const { imageBase64 } = await generateImageLocal({
-          prompt: localPrompt,
-          width: imgWidth,
-          height: imgHeight,
-          seed: item.seed,
-          sceneRefBase64: sceneBase64,
-          charRefBase64: charBase64,
-        });
-        result = `data:image/png;base64,${imageBase64}`;
-      } else {
-        logMessage('MODEL', 'Gemini / gemini-2.5-flash-image', 'info');
-        result = await callGeminiAPI(item.cleanPrompt, baseInput, item.charRefImage, abortControllerRef.current.signal);
-      }
+      logMessage('MODEL', 'Gemini / gemini-2.5-flash-image', 'info');
+      const result = await callGeminiAPI(item.cleanPrompt, baseInput, item.charRefImage, abortControllerRef.current.signal);
       
       setImageQueue(prev => prev.map(i => i.id === item.id ? { ...i, status: 'completed', resultBase64: result } : i));
       logMessage('BAŞARI', `"${item.displayName}" tamamlandı.`, 'success');
@@ -558,7 +471,6 @@ export default function App() {
         createQueueItem(stylePrompt, `${item.displayName} (Stilize)`, { mode: 'direct' }, item.meta, false, { refImage: result });
       }
 
-      if (!localMode) startCooldown(12);
 
     } catch (err: any) {
       if (err.name === 'AbortError') {
@@ -568,9 +480,6 @@ export default function App() {
         if (err.message?.includes('429') || err.message?.includes('quota') || err.message?.includes('RESOURCE_EXHAUSTED')) {
           errorMsg = "Kota doldu. Lütfen kendi API anahtarınızı seçin.";
           logMessage('SİSTEM', "Kota aşımı! Ücretli bir proje anahtarı seçmeniz önerilir.", 'error');
-          if (!localMode) startCooldown(30);
-        } else {
-          if (!localMode) startCooldown(5);
         }
         setImageQueue(prev => prev.map(i => i.id === item.id ? { ...i, status: 'error', errorMsg: errorMsg } : i));
         logMessage('HATA', errorMsg, 'error');
@@ -584,6 +493,8 @@ export default function App() {
   // --- ACTIONS ---
 
   const handleGenerateManual = async () => {
+    const effectiveAr = aspectRatio === 'manual' ? `manual:${manualAr.width}:${manualAr.height}` : aspectRatio;
+
     if (genMode === 'maxi') {
       setIsMaxiModalOpen(true);
       return;
@@ -593,7 +504,7 @@ export default function App() {
       logMessage('MULTI', `${imgCount} varyasyon üretiliyor...`, 'info');
       for (let i = 0; i < imgCount; i++) {
         const result = await fetchPromptFromGemini(requestInput, selectedPersona);
-        createQueueItem(result.english_prompt, `Varyasyon #${i + 1}`, { style: selectedStyle }, { source_text: requestInput, turkish_explanation: result.turkish_explanation }, i === 0);
+        createQueueItem(result.english_prompt, `Varyasyon #${i + 1}`, { style: selectedStyle, aspectRatio: effectiveAr }, { source_text: requestInput, turkish_explanation: result.turkish_explanation }, i === 0);
       }
       return;
     }
@@ -603,16 +514,16 @@ export default function App() {
       logMessage('SİSTEM', 'Prompt üretiliyor...', 'info');
       const result = await fetchPromptFromGemini(requestInput, selectedPersona);
       setPromptInput(result.english_prompt);
-      createQueueItem(result.english_prompt, null, { style: selectedStyle }, { source_text: requestInput, turkish_explanation: result.turkish_explanation });
+      createQueueItem(result.english_prompt, null, { style: selectedStyle, aspectRatio: effectiveAr }, { source_text: requestInput, turkish_explanation: result.turkish_explanation });
     } else {
-      createQueueItem(promptInput, null, { style: selectedStyle });
+      createQueueItem(promptInput, null, { style: selectedStyle, aspectRatio: effectiveAr });
     }
   };
 
   const handleStoryStart = async () => {
     if (!storyText) return;
     logMessage('SENARYO', 'Metin analiz ediliyor...', 'info');
-    logMessage('MODEL', localMode ? 'Ollama / qwen2.5:7b — sahne çıkarımı' : 'Gemini / gemini-3-flash-preview — sahne çıkarımı', 'info');
+    logMessage('MODEL', 'Gemini / gemini-3-flash-preview — sahne çıkarımı', 'info');
     
     try {
       const ai = new GoogleGenAI({ apiKey: getActiveApiKey() });
@@ -662,22 +573,21 @@ export default function App() {
     setIsCinemaAnalyzing(true);
     try {
       const cinemaPrompt = "Analyze this scene and suggest 10 cinematic camera angles. Output JSON array of objects with shot_type, shot_name_tr, english_prompt, turkish_explanation, is_char_visible, shot_icon.";
-      let shots: any[];
-      if (localMode) {
-        logMessage('MODEL', 'Ollama / qwen2.5vl:7b — sahne analizi', 'info');
-        const imageBase64 = cinemaSceneRef.split(',')[1];
-        const raw = await analyzeImageLocal(imageBase64, cinemaPrompt);
-        shots = JSON.parse(raw);
-      } else {
-        logMessage('MODEL', 'Gemini / gemini-3-flash-preview — sahne analizi', 'info');
-        const ai = new GoogleGenAI({ apiKey: getActiveApiKey() });
-        const response = await ai.models.generateContent({
-          model: 'gemini-3-flash-preview',
-          contents: cinemaPrompt,
-          config: { responseMimeType: "application/json" }
-        });
-        shots = JSON.parse(response.text || '[]');
-      }
+      logMessage('MODEL', 'Gemini / gemini-3-flash-preview — sahne analizi', 'info');
+      const ai = new GoogleGenAI({ apiKey: getActiveApiKey() });
+
+      let mimeType = "image/jpeg";
+      if (cinemaSceneRef.startsWith("data:image/png")) mimeType = "image/png";
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-3-flash-preview',
+        contents: [
+          { text: cinemaPrompt },
+          { inlineData: { mimeType, data: cinemaSceneRef.split(',')[1] } }
+        ],
+        config: { responseMimeType: "application/json" }
+      });
+      const shots = JSON.parse(response.text || '[]');
       setCinemaAnalysis(shots);
       setSelectedCinemaShots(shots.map((_: any, i: number) => i));
     } catch (err: any) {
@@ -748,86 +658,48 @@ export default function App() {
   const runAudioPipeline = async () => {
     if (!audioFile) return;
     setAudioStepStatus(prev => ({ ...prev, 2: 'processing' }));
-    
-    try {
-      let transcript: string;
 
-      if (localMode) {
-        // 1. Transcribe via Whisper
-        logMessage('MODEL', 'Whisper Large v3 — ses transkripsiyon', 'info');
-        const result = await transcribeAudioLocal(audioFile.base64);
-        transcript = result.text;
-      } else {
-        logMessage('MODEL', 'Gemini / gemini-3-flash-preview — ses transkripsiyon', 'info');
-        const ai = new GoogleGenAI({ apiKey: getActiveApiKey() });
-        const transResponse = await ai.models.generateContent({
-          model: 'gemini-3-flash-preview',
-          contents: [
-            { text: 'Transcribe this audio file accurately. Label speakers.' },
-            { inlineData: { mimeType: audioFile.mimeType, data: audioFile.base64 } }
-          ]
-        });
-        transcript = transResponse.text || '';
-      }
+    try {
+      const ai = new GoogleGenAI({ apiKey: getActiveApiKey() });
+
+      // 1. Transcribe via Gemini
+      logMessage('MODEL', 'Gemini / gemini-3-flash-preview — ses transkripsiyon', 'info');
+      const transResponse = await ai.models.generateContent({
+        model: 'gemini-3-flash-preview',
+        contents: [
+          { text: 'Transcribe this audio file accurately. Label speakers.' },
+          { inlineData: { mimeType: audioFile.mimeType, data: audioFile.base64 } }
+        ]
+      });
+      const transcript = transResponse.text || '';
       setAudioTranscript(transcript);
       setAudioStepStatus(prev => ({ ...prev, 2: 'done', 3: 'processing' }));
 
       // 2. Scenario
-      let scenario: string;
-      if (localMode) {
-        logMessage('MODEL', 'Ollama / qwen2.5:7b — senaryo üretimi', 'info');
-        scenario = await generateTextLocal({
-          prompt: `Create a visual storyboard from this transcript. Output JSON array of scenes. Transcript: ${transcript}`,
-          json: true,
-        });
-      } else {
-        logMessage('MODEL', 'Gemini / gemini-3-flash-preview — senaryo üretimi', 'info');
-        const ai = new GoogleGenAI({ apiKey: getActiveApiKey() });
-        const scenResponse = await ai.models.generateContent({
-          model: 'gemini-3-flash-preview',
-          contents: `Create a visual storyboard from this transcript. Output JSON array of scenes. Transcript: ${transcript}`,
-          config: { responseMimeType: "application/json" }
-        });
-        scenario = scenResponse.text || '';
-      }
+      logMessage('MODEL', 'Gemini / gemini-3-flash-preview — senaryo üretimi', 'info');
+      const scenResponse = await ai.models.generateContent({
+        model: 'gemini-3-flash-preview',
+        contents: `Create a visual storyboard from this transcript. Output JSON array of scenes. Transcript: ${transcript}`,
+        config: { responseMimeType: "application/json" }
+      });
+      const scenario = scenResponse.text || '';
       setAudioScenario(scenario);
       setAudioStepStatus(prev => ({ ...prev, 3: 'done', 4: 'processing' }));
 
       // 3. Prompts
-      let prompts: string[];
-      if (localMode) {
-        logMessage('MODEL', 'Ollama / qwen2.5:7b — prompt listesi üretimi', 'info');
-        const raw = await generateTextLocal({
-          prompt: `Convert these scenes into English image prompts. Output JSON array of strings. Scenes: ${scenario}`,
-          json: true,
-        });
-        prompts = JSON.parse(raw);
-      } else {
-        logMessage('MODEL', 'Gemini / gemini-3-flash-preview — prompt listesi üretimi', 'info');
-        const ai = new GoogleGenAI({ apiKey: getActiveApiKey() });
-        const promptResponse = await ai.models.generateContent({
-          model: 'gemini-3-flash-preview',
-          contents: `Convert these scenes into English image prompts. Output JSON array of strings. Scenes: ${scenario}`,
-          config: { responseMimeType: "application/json" }
-        });
-        prompts = JSON.parse(promptResponse.text || '[]');
-      }
+      logMessage('MODEL', 'Gemini / gemini-3-flash-preview — prompt listesi üretimi', 'info');
+      const promptResponse = await ai.models.generateContent({
+        model: 'gemini-3-flash-preview',
+        contents: `Convert these scenes into English image prompts. Output JSON array of strings. Scenes: ${scenario}`,
+        config: { responseMimeType: "application/json" }
+      });
+      const prompts: string[] = JSON.parse(promptResponse.text || '[]');
       setAudioPrompts(prompts);
       setAudioStepStatus(prev => ({ ...prev, 4: 'done', 5: 'processing' }));
 
-      // 4. Images
-      const images: string[] = [];
+      // 4. Images — add to queue for proper processing
       for (const p of prompts) {
-        let img: string;
-        if (localMode) {
-          const { imageBase64 } = await generateImageLocal({ prompt: p });
-          img = `data:image/png;base64,${imageBase64}`;
-        } else {
-          img = await callGeminiAPI(p);
-        }
-        images.push(img);
-        setAudioImages([...images]);
-        createQueueItem(p, `Audio Scene ${images.length}`, {}, { source_text: "Audio Pipeline" }, false);
+        createQueueItem(p, `Audio Scene`, {}, { source_text: "Audio Pipeline" }, false);
       }
       setAudioStepStatus(prev => ({ ...prev, 5: 'done' }));
 
@@ -911,82 +783,23 @@ export default function App() {
           )}
         </div>
 
-        {/* COOLDOWN PROGRESS */}
-        <AnimatePresence>
-          {isCoolingDown && !localMode && (
-            <motion.div 
-              initial={{ height: 0, opacity: 0 }}
-              animate={{ height: 'auto', opacity: 1 }}
-              exit={{ height: 0, opacity: 0 }}
-              className="px-3 pb-3 border-t border-white/5 bg-black/20 pt-3"
-            >
-              <div className="flex justify-between items-center mb-2">
-                <span className="text-[10px] font-bold text-yellow-500 uppercase tracking-widest flex items-center gap-2">
-                  <Loader2 className="w-3 h-3 animate-spin" /> Kota Beklemesi
-                </span>
-                <span className="text-[10px] font-mono text-zinc-400">{cooldownSeconds}s</span>
-              </div>
-              <div className="h-1.5 w-full bg-black rounded-full overflow-hidden border border-white/5">
-                <motion.div 
-                  className="h-full bg-yellow-500"
-                  style={{ width: `${cooldownProgress}%` }}
-                  transition={{ duration: 0.1 }}
-                />
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        {/* API KEY / LOCAL MODE */}
+        {/* API KEY */}
         <div className="p-3 border-t border-white/5 bg-black/20 space-y-3">
-          {/* Local Mode Toggle */}
-          <button
-            onClick={() => {
-              const next = !localMode;
-              setLocalMode(next);
-              localStorage.setItem('localMode', String(next));
-            }}
-            className={cn(
-              "w-full rounded-lg px-3 py-2 text-[10px] font-bold uppercase tracking-widest transition-all flex items-center justify-between gap-2 border",
-              localMode
-                ? "bg-violet-500/20 border-violet-500/50 text-violet-300"
-                : "bg-black/30 border-white/10 text-zinc-500 hover:border-white/20"
-            )}
-          >
-            <span className="flex items-center gap-2">
-              <Monitor className="w-3 h-3" />
-              {localMode ? "Lokal Mod Aktif" : "Bulut Modu Aktif"}
-            </span>
-            <span className={cn(
-              "w-7 h-4 rounded-full relative transition-colors",
-              localMode ? "bg-violet-500" : "bg-zinc-700"
-            )}>
-              <span className={cn(
-                "absolute top-0.5 w-3 h-3 rounded-full bg-white transition-transform",
-                localMode ? "translate-x-3.5" : "translate-x-0.5"
-              )} />
-            </span>
-          </button>
-
-          {!localMode && (
-            <>
-              {!hasSelectedKey && (
-                <button
-                  onClick={handleOpenKeySelector}
-                  className="w-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 rounded-lg px-3 py-2 text-[10px] font-bold uppercase tracking-widest hover:bg-emerald-500/20 transition-all flex items-center justify-center gap-2"
-                >
-                  <Sparkles className="w-3 h-3" /> Ücretli API Anahtarı Seç
-                </button>
-              )}
-              <input
-                type="password"
-                placeholder="Manuel API Key (Opsiyonel)..."
-                value={customApiKey}
-                onChange={(e) => setCustomApiKey(e.target.value)}
-                className="w-full bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-[10px] focus:outline-none focus:border-emerald-500 transition-colors"
-              />
-            </>
+          {!hasSelectedKey && (
+            <button
+              onClick={handleOpenKeySelector}
+              className="w-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 rounded-lg px-3 py-2 text-[10px] font-bold uppercase tracking-widest hover:bg-emerald-500/20 transition-all flex items-center justify-center gap-2"
+            >
+              <Sparkles className="w-3 h-3" /> Ücretli API Anahtarı Seç
+            </button>
           )}
+          <input
+            type="password"
+            placeholder="Manuel API Key (Opsiyonel)..."
+            value={customApiKey}
+            onChange={(e) => setCustomApiKey(e.target.value)}
+            className="w-full bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-[10px] focus:outline-none focus:border-emerald-500 transition-colors"
+          />
         </div>
       </div>
 
