@@ -1061,16 +1061,19 @@ export default function App() {
                           <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
                             <button onClick={() => {
                               const canvas = maskCanvasRef.current;
-                              if (canvas && sceneRef) {
-                                const img = new Image();
-                                img.onload = () => {
-                                  canvas.width = img.width; canvas.height = img.height;
-                                  const ctx = canvas.getContext('2d');
-                                  if (ctx) ctx.drawImage(img, 0, 0);
-                                  setIsMaskingModalOpen(true);
-                                };
-                                img.src = sceneRef;
+                              if (canvas) {
+                                canvas.width = 1024; canvas.height = 1024; // Default
+                                const ctx = canvas.getContext('2d');
+                                if (ctx) {
+                                  const img = new Image();
+                                  img.onload = () => {
+                                    canvas.width = img.width; canvas.height = img.height;
+                                    ctx.drawImage(img, 0, 0);
+                                  };
+                                  img.src = sceneRef;
+                                }
                               }
+                              setIsMaskingModalOpen(true);
                             }} className="p-2 bg-blue-500 rounded-lg text-black"><Ghost className="w-4 h-4" /></button>
                             <button onClick={() => setSceneRef(null)} className="p-2 bg-red-500 rounded-lg text-white"><X className="w-4 h-4" /></button>
                           </div>
@@ -2193,28 +2196,23 @@ export default function App() {
             </div>
             <div className="flex-1 flex items-center justify-center p-8 overflow-hidden">
                <div className="relative glass-panel p-2">
-                  <canvas
+                  <canvas 
                     ref={maskCanvasRef}
-                    className="max-w-full max-h-[70vh] cursor-crosshair bg-black rounded-lg touch-none"
+                    className="max-w-full max-h-[70vh] cursor-crosshair bg-black rounded-lg"
                     onMouseDown={(e) => {
                       const canvas = maskCanvasRef.current;
                       if (!canvas) return;
                       const ctx = canvas.getContext('2d');
                       if (!ctx) return;
-                      const rect = canvas.getBoundingClientRect();
-                      const x = (e.clientX - rect.left) * (canvas.width / rect.width);
-                      const y = (e.clientY - rect.top) * (canvas.height / rect.height);
                       ctx.strokeStyle = 'white';
                       ctx.lineWidth = 40;
                       ctx.lineCap = 'round';
-                      ctx.lineJoin = 'round';
                       ctx.beginPath();
+                      const rect = canvas.getBoundingClientRect();
+                      const x = (e.clientX - rect.left) * (canvas.width / rect.width);
+                      const y = (e.clientY - rect.top) * (canvas.height / rect.height);
                       ctx.moveTo(x, y);
-                      ctx.lineTo(x, y);
-                      ctx.stroke();
                       (canvas as any).isDrawing = true;
-                      (canvas as any).lastX = x;
-                      (canvas as any).lastY = y;
                     }}
                     onMouseMove={(e) => {
                       const canvas = maskCanvasRef.current;
@@ -2224,61 +2222,10 @@ export default function App() {
                       const rect = canvas.getBoundingClientRect();
                       const x = (e.clientX - rect.left) * (canvas.width / rect.width);
                       const y = (e.clientY - rect.top) * (canvas.height / rect.height);
-                      ctx.beginPath();
-                      ctx.moveTo((canvas as any).lastX, (canvas as any).lastY);
                       ctx.lineTo(x, y);
                       ctx.stroke();
-                      (canvas as any).lastX = x;
-                      (canvas as any).lastY = y;
                     }}
                     onMouseUp={() => {
-                      const canvas = maskCanvasRef.current;
-                      if (canvas) (canvas as any).isDrawing = false;
-                    }}
-                    onMouseLeave={() => {
-                      const canvas = maskCanvasRef.current;
-                      if (canvas) (canvas as any).isDrawing = false;
-                    }}
-                    onTouchStart={(e) => {
-                      e.preventDefault();
-                      const canvas = maskCanvasRef.current;
-                      if (!canvas) return;
-                      const ctx = canvas.getContext('2d');
-                      if (!ctx) return;
-                      const touch = e.touches[0];
-                      const rect = canvas.getBoundingClientRect();
-                      const x = (touch.clientX - rect.left) * (canvas.width / rect.width);
-                      const y = (touch.clientY - rect.top) * (canvas.height / rect.height);
-                      ctx.strokeStyle = 'white';
-                      ctx.lineWidth = 40;
-                      ctx.lineCap = 'round';
-                      ctx.lineJoin = 'round';
-                      ctx.beginPath();
-                      ctx.moveTo(x, y);
-                      ctx.lineTo(x, y);
-                      ctx.stroke();
-                      (canvas as any).isDrawing = true;
-                      (canvas as any).lastX = x;
-                      (canvas as any).lastY = y;
-                    }}
-                    onTouchMove={(e) => {
-                      e.preventDefault();
-                      const canvas = maskCanvasRef.current;
-                      if (!canvas || !(canvas as any).isDrawing) return;
-                      const ctx = canvas.getContext('2d');
-                      if (!ctx) return;
-                      const touch = e.touches[0];
-                      const rect = canvas.getBoundingClientRect();
-                      const x = (touch.clientX - rect.left) * (canvas.width / rect.width);
-                      const y = (touch.clientY - rect.top) * (canvas.height / rect.height);
-                      ctx.beginPath();
-                      ctx.moveTo((canvas as any).lastX, (canvas as any).lastY);
-                      ctx.lineTo(x, y);
-                      ctx.stroke();
-                      (canvas as any).lastX = x;
-                      (canvas as any).lastY = y;
-                    }}
-                    onTouchEnd={() => {
                       const canvas = maskCanvasRef.current;
                       if (canvas) (canvas as any).isDrawing = false;
                     }}
