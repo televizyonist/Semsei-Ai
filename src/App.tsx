@@ -108,6 +108,7 @@ export default function App() {
   const [fullscreenSrc, setFullscreenSrc] = useState('');
   const [isMaskingModalOpen, setIsMaskingModalOpen] = useState(false);
   const [isFaceModalOpen, setIsFaceModalOpen] = useState(false);
+  const [faceEditSource, setFaceEditSource] = useState<string | null>(null);
   const [isJobCompleteModalOpen, setIsJobCompleteModalOpen] = useState(false);
 
   // Expanded tab state
@@ -177,6 +178,18 @@ export default function App() {
     img.src = sceneRef;
   };
 
+  const faceCanvasCallback = (node: HTMLCanvasElement | null) => {
+    (faceCanvasRef as any).current = node;
+    if (!node || !faceEditSource) return;
+    const img = new Image();
+    img.onload = () => {
+      node.width = img.width;
+      node.height = img.height;
+      const ctx = node.getContext('2d');
+      if (ctx) ctx.drawImage(img, 0, 0);
+    };
+    img.src = faceEditSource;
+  };
 
   // --- HELPERS ---
 
@@ -1072,17 +1085,7 @@ export default function App() {
                           <img src={charRef} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                           <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
                             <button onClick={() => {
-                              const canvas = faceCanvasRef.current;
-                              if (canvas) {
-                                canvas.width = 512; canvas.height = 512;
-                                const ctx = canvas.getContext('2d');
-                                if (ctx) {
-                                  const img = new Image();
-                                  img.onload = () => ctx.drawImage(img, 0, 0, 512, 512);
-                                  img.src = charRef;
-                                }
-                              }
-                              setIsFaceModalOpen(true);
+                              if (charRef) { setFaceEditSource(charRef); setIsFaceModalOpen(true); }
                             }} className="p-2 bg-emerald-500 rounded-lg text-black"><Camera className="w-4 h-4" /></button>
                             <button onClick={() => setCharRef(null)} className="p-2 bg-red-500 rounded-lg text-white"><X className="w-4 h-4" /></button>
                           </div>
@@ -2307,6 +2310,7 @@ export default function App() {
                         setCharRef(canvas.toDataURL('image/png'));
                       }
                       setIsFaceModalOpen(false);
+                      setFaceEditSource(null);
                       logMessage('SİSTEM', 'Yüz referansı güncellendi.', 'success');
                     }
                   }}
@@ -2314,13 +2318,13 @@ export default function App() {
                 >
                   Yüzü Kaydet
                 </button>
-                <button onClick={() => setIsFaceModalOpen(false)} className="p-3 hover:bg-white/10 rounded-full transition-colors"><X className="w-6 h-6" /></button>
+                <button onClick={() => { setIsFaceModalOpen(false); setFaceEditSource(null); }} className="p-3 hover:bg-white/10 rounded-full transition-colors"><X className="w-6 h-6" /></button>
               </div>
             </div>
             <div className="flex-1 flex items-center justify-center p-8 overflow-hidden">
                <div className="relative glass-panel p-2">
-                  <canvas 
-                    ref={faceCanvasRef}
+                  <canvas
+                    ref={faceCanvasCallback}
                     className="max-w-full max-h-[70vh] bg-black rounded-lg"
                   />
                </div>
