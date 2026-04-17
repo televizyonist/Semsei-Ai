@@ -28,7 +28,8 @@ import {
   Square,
   Play,
   RotateCcw,
-  Ghost
+  Ghost,
+  FolderOpen
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
@@ -112,6 +113,8 @@ export default function App() {
   const [faceCrop, setFaceCrop] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
   const [faceCropDrag, setFaceCropDrag] = useState<{ startX: number; startY: number; dragging: boolean } | null>(null);
   const [isJobCompleteModalOpen, setIsJobCompleteModalOpen] = useState(false);
+  const [saveFolderName, setSaveFolderName] = useState<string | null>(null);
+  const saveFolderRef = useRef<FileSystemDirectoryHandle | null>(null);
 
   // Expanded tab state
   const [expandedTab, setExpandedTab] = useState<'manual' | 'story' | 'audio' | 'cinema' | null>(null);
@@ -199,6 +202,27 @@ export default function App() {
   };
 
   const generateRandomSeed = () => Math.floor(Math.random() * 2000000000);
+
+  const saveImageToFolder = async (base64: string, name: string) => {
+    const dir = saveFolderRef.current;
+    if (!dir) return;
+    try {
+      const raw = base64.includes(',') ? base64.split(',')[1] : base64;
+      const bin = atob(raw);
+      const arr = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+      const safeName = name.replace(/[^a-zA-Z0-9_\-. ]/g, '_').slice(0, 80);
+      const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      const fileName = `${safeName}_${ts}.png`;
+      const fileHandle = await dir.getFileHandle(fileName, { create: true });
+      const writable = await fileHandle.createWritable();
+      await writable.write(new Blob([arr], { type: 'image/png' }));
+      await writable.close();
+      logMessage('KAYIT', `"${fileName}" klasöre kaydedildi.`, 'success');
+    } catch (e: any) {
+      logMessage('HATA', `Dosya kaydedilemedi: ${e.message}`, 'error');
+    }
+  };
 
   const parseRatio = (ratioStr: string) => {
     if (!ratioStr || ratioStr === 'native') return null;
@@ -459,6 +483,7 @@ export default function App() {
       
       setImageQueue(prev => prev.map(i => i.id === item.id ? { ...i, status: 'completed', resultBase64: result } : i));
       logMessage('BAŞARI', `"${item.displayName}" tamamlandı.`, 'success');
+      if (saveFolderRef.current) await saveImageToFolder(result, item.displayName);
 
       // Auto Style Transfer
       if (item.styleConfig) {
@@ -788,6 +813,38 @@ export default function App() {
                 : 'border-white/10 focus:border-white/30'
             }`}
           />
+        </div>
+
+        {/* AUTO-SAVE FOLDER */}
+        <div className="p-3 border-t border-white/5 bg-black/20 space-y-2">
+          <div className="flex items-center gap-2">
+            <FolderOpen className={`w-3 h-3 ${saveFolderName ? 'text-amber-400' : 'text-white/30'}`} />
+            <span className="text-[9px] font-bold uppercase tracking-widest text-white/50">Otomatik Kayıt</span>
+            {saveFolderName && <span className="text-[8px] text-amber-400 ml-auto truncate max-w-[80px]">{saveFolderName}</span>}
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={async () => {
+                try {
+                  const handle = await (window as any).showDirectoryPicker({ mode: 'readwrite' });
+                  saveFolderRef.current = handle;
+                  setSaveFolderName(handle.name);
+                  logMessage('SİSTEM', `Kayıt klasörü: ${handle.name}`, 'success');
+                } catch {}
+              }}
+              className="flex-1 bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-[10px] hover:border-amber-500/30 hover:text-amber-400 transition-colors text-left truncate"
+            >
+              {saveFolderName || 'Klasör Seç...'}
+            </button>
+            {saveFolderName && (
+              <button
+                onClick={() => { saveFolderRef.current = null; setSaveFolderName(null); logMessage('SİSTEM', 'Otomatik kayıt kapatıldı.', 'info'); }}
+                className="p-2 bg-black/50 border border-white/10 rounded-lg hover:border-red-500/30 hover:text-red-400 transition-colors"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
