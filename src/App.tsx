@@ -41,14 +41,6 @@ import { PERSONAS, STYLES } from './constants';
 // PDF.js Worker Setup
 pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
 
-declare global {
-  interface Window {
-    aistudio?: {
-      hasSelectedApiKey?: () => Promise<boolean>;
-      openSelectKey?: () => Promise<void>;
-    };
-  }
-}
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -92,7 +84,7 @@ export default function App() {
   // Inputs
   const [requestInput, setRequestInput] = useState('');
   const [promptInput, setPromptInput] = useState('');
-  const [customApiKey, setCustomApiKey] = useState('');
+  const [customApiKey, setCustomApiKey] = useState(() => localStorage.getItem('dreamcanvas_api_key') || '');
   const [aspectRatio, setAspectRatio] = useState('native');
   const [manualAr, setManualAr] = useState({ width: 1024, height: 1024 });
   const [seed, setSeed] = useState<number | ''>('');
@@ -108,7 +100,6 @@ export default function App() {
   const [charRef, setCharRef] = useState<string | null>(null);
   const [maskedImage, setMaskedImage] = useState<string | null>(null);
   const [isMaskActive, setIsMaskActive] = useState(false);
-  const [hasSelectedKey, setHasSelectedKey] = useState(false);
 
   // Modals
   const [isAboutModalOpen, setIsAboutModalOpen] = useState(false);
@@ -170,14 +161,8 @@ export default function App() {
   const audioPlayerRef = useRef<HTMLAudioElement>(null);
 
   useEffect(() => {
-    const checkKey = async () => {
-      if (window.aistudio?.hasSelectedApiKey) {
-        const hasKey = await window.aistudio.hasSelectedApiKey();
-        setHasSelectedKey(hasKey);
-      }
-    };
-    checkKey();
-  }, []);
+    localStorage.setItem('dreamcanvas_api_key', customApiKey);
+  }, [customApiKey]);
 
   const maskCanvasCallback = (node: HTMLCanvasElement | null) => {
     (maskCanvasRef as any).current = node;
@@ -192,19 +177,6 @@ export default function App() {
     img.src = sceneRef;
   };
 
-  const handleOpenKeySelector = async () => {
-    try {
-      if (window.aistudio && window.aistudio.openSelectKey) {
-        await window.aistudio.openSelectKey();
-        setHasSelectedKey(true);
-      } else {
-        alert("API Anahtarı seçici sadece AI Studio önizleme penceresinde çalışır. Lütfen uygulamayı yeni sekmede değil, AI Studio içindeki önizleme penceresinde kullanın.");
-      }
-    } catch (error: any) {
-      console.error("Key selector error:", error);
-      alert("API Anahtarı seçilirken bir hata oluştu: " + error.message);
-    }
-  };
 
   // --- HELPERS ---
 
@@ -791,23 +763,22 @@ export default function App() {
         </div>
 
         {/* API KEY */}
-        <div className="p-3 border-t border-white/5 bg-black/20 space-y-3">
-          <button 
-            onClick={handleOpenKeySelector}
-            className={`w-full border rounded-lg px-3 py-2 text-[10px] font-bold uppercase tracking-widest transition-all flex items-center justify-center gap-2 ${
-              hasSelectedKey 
-                ? "bg-white/5 border-white/10 text-white/50 hover:bg-white/10 hover:text-white" 
-                : "bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20"
-            }`}
-          >
-            <Sparkles className="w-3 h-3" /> {hasSelectedKey ? "API Anahtarını Değiştir" : "Ücretli API Anahtarı Seç"}
-          </button>
-          <input 
-            type="password" 
-            placeholder="Manuel API Key (Opsiyonel)..." 
+        <div className="p-3 border-t border-white/5 bg-black/20 space-y-2">
+          <div className="flex items-center gap-2">
+            <Sparkles className={`w-3 h-3 ${customApiKey.trim().length > 5 ? 'text-emerald-400' : 'text-white/30'}`} />
+            <span className="text-[9px] font-bold uppercase tracking-widest text-white/50">Gemini API Key</span>
+            {customApiKey.trim().length > 5 && <span className="text-[8px] text-emerald-400 ml-auto">Aktif</span>}
+          </div>
+          <input
+            type="password"
+            placeholder="Gemini API Key girin..."
             value={customApiKey}
             onChange={(e) => setCustomApiKey(e.target.value)}
-            className="w-full bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-[10px] focus:outline-none focus:border-emerald-500 transition-colors"
+            className={`w-full bg-black/50 border rounded-lg px-3 py-2 text-[10px] focus:outline-none transition-colors ${
+              customApiKey.trim().length > 5
+                ? 'border-emerald-500/30 focus:border-emerald-500'
+                : 'border-white/10 focus:border-white/30'
+            }`}
           />
         </div>
       </div>
