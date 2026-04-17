@@ -2,7 +2,7 @@
   "1": {
     "class_type": "UNETLoader",
     "inputs": {
-      "unet_name": "flux1-dev-fp8.safetensors",
+      "unet_name": "flux1-schnell-fp8.safetensors",
       "weight_dtype": "fp8_e4m3fn"
     }
   },
@@ -46,17 +46,10 @@
       "clip": ["2", 0]
     }
   },
-  "8": {
-    "class_type": "FluxGuidance",
-    "inputs": {
-      "conditioning": ["6", 0],
-      "guidance": 3.5
-    }
-  },
   "9": {
     "class_type": "ControlNetApplyAdvanced",
     "inputs": {
-      "positive": ["8", 0],
+      "positive": ["6", 0],
       "negative": ["7", 0],
       "control_net": ["5", 0],
       "image": ["4", 0],
@@ -81,7 +74,7 @@
       "negative": ["9", 1],
       "latent_image": ["10", 0],
       "seed": "{{SEED}}",
-      "steps": 20,
+      "steps": 4,
       "cfg": 1.0,
       "sampler_name": "euler",
       "scheduler": "simple",

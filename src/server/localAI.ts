@@ -105,7 +105,12 @@ async function runComfyWorkflow(prompt: Record<string, unknown>): Promise<ImageG
         const img = nodeOut.images[0];
         const imgRes = await fetch(`${COMFY_URL}/view?filename=${img.filename}&subfolder=${img.subfolder}&type=${img.type}`);
         const buf = await imgRes.arrayBuffer();
-        const imageBase64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
+        const bytes = new Uint8Array(buf);
+        let binary = '';
+        for (let i = 0; i < bytes.length; i += 8192) {
+          binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
+        }
+        const imageBase64 = btoa(binary);
         return { imageBase64, filename: img.filename };
       }
     }

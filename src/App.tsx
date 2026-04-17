@@ -76,6 +76,7 @@ interface QueueItem {
   groupId: string | null;
   groupName: string | null;
   aspectRatio: string;
+  styleText: string;
   hasRealSceneRef: boolean;
   errorMsg?: string;
 }
@@ -462,6 +463,7 @@ export default function App() {
       styleConfig: (effectiveMode === 'flow' && effStyle) ? { prompt: effStyle, name: "Flow Style" } : null,
       isStyled: false,
       styleName: effStyle ? "Stil" : "Yok",
+      styleText: effStyle || '',
       groupId: settings.groupId || null,
       groupName: settings.groupName || null,
       aspectRatio: effectiveAspectRatio,
@@ -504,13 +506,39 @@ export default function App() {
         const charBase64 = typeof item.charRefImage === 'string' ? item.charRefImage.split(',')[1] : undefined;
         const hasScene = Boolean(sceneBase64);
         const hasChar = Boolean(charBase64);
-        const workflowLabel = !hasScene && !hasChar ? 'Workflow A — FLUX.1-dev-fp8'
-          : hasScene && !hasChar ? 'Workflow B — FLUX.1-dev-fp8 + ControlNet'
-          : !hasScene && hasChar ? 'Workflow C — FLUX.1-dev-fp8 + PuLID'
-          : 'Workflow D — FLUX.1-dev-fp8 + ControlNet + PuLID';
+        const workflowLabel = !hasScene && !hasChar ? 'Workflow A — FLUX.1-schnell-fp8'
+          : hasScene && !hasChar ? 'Workflow B — FLUX.1-schnell-fp8 + ControlNet'
+          : !hasScene && hasChar ? 'Workflow C — FLUX.1-schnell-fp8 + PuLID'
+          : 'Workflow D — FLUX.1-schnell-fp8 + ControlNet + PuLID';
         logMessage('MODEL', `ComfyUI / ${workflowLabel}`, 'info');
+
+        // Build clean FLUX prompt (no Gemini-specific instruction prefixes)
+        const localPrompt = [item.originalPromptText, item.styleText].filter(Boolean).join(', ');
+
+        // Compute image dimensions from aspect ratio
+        let imgWidth = 1024, imgHeight = 1024;
+        const arStr = item.aspectRatio;
+        if (arStr && arStr !== 'native') {
+          if (arStr.startsWith('manual:')) {
+            const p = arStr.split(':');
+            imgWidth = parseInt(p[1]) || 1024;
+            imgHeight = parseInt(p[2]) || 1024;
+          } else {
+            const ratio = parseRatio(arStr);
+            if (ratio) {
+              if (ratio > 1) { imgWidth = Math.round(1024 * ratio); imgHeight = 1024; }
+              else { imgWidth = 1024; imgHeight = Math.round(1024 / ratio); }
+            }
+          }
+          // Round to nearest 64 (FLUX requirement)
+          imgWidth = Math.round(imgWidth / 64) * 64;
+          imgHeight = Math.round(imgHeight / 64) * 64;
+        }
+
         const { imageBase64 } = await generateImageLocal({
-          prompt: item.cleanPrompt,
+          prompt: localPrompt,
+          width: imgWidth,
+          height: imgHeight,
           seed: item.seed,
           sceneRefBase64: sceneBase64,
           charRefBase64: charBase64,
@@ -530,7 +558,7 @@ export default function App() {
         createQueueItem(stylePrompt, `${item.displayName} (Stilize)`, { mode: 'direct' }, item.meta, false, { refImage: result });
       }
 
-      startCooldown(12); // 12 saniye bekleme süresi
+      if (!localMode) startCooldown(12);
 
     } catch (err: any) {
       if (err.name === 'AbortError') {
@@ -540,9 +568,9 @@ export default function App() {
         if (err.message?.includes('429') || err.message?.includes('quota') || err.message?.includes('RESOURCE_EXHAUSTED')) {
           errorMsg = "Kota doldu. Lütfen kendi API anahtarınızı seçin.";
           logMessage('SİSTEM', "Kota aşımı! Ücretli bir proje anahtarı seçmeniz önerilir.", 'error');
-          startCooldown(30); // Hata durumunda daha uzun bekle
+          if (!localMode) startCooldown(30);
         } else {
-          startCooldown(5);
+          if (!localMode) startCooldown(5);
         }
         setImageQueue(prev => prev.map(i => i.id === item.id ? { ...i, status: 'error', errorMsg: errorMsg } : i));
         logMessage('HATA', errorMsg, 'error');
@@ -885,7 +913,7 @@ export default function App() {
 
         {/* COOLDOWN PROGRESS */}
         <AnimatePresence>
-          {isCoolingDown && (
+          {isCoolingDown && !localMode && (
             <motion.div 
               initial={{ height: 0, opacity: 0 }}
               animate={{ height: 'auto', opacity: 1 }}
