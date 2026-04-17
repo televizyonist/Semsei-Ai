@@ -109,6 +109,8 @@ export default function App() {
   const [isMaskingModalOpen, setIsMaskingModalOpen] = useState(false);
   const [isFaceModalOpen, setIsFaceModalOpen] = useState(false);
   const [faceEditSource, setFaceEditSource] = useState<string | null>(null);
+  const [faceCrop, setFaceCrop] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+  const [faceCropDrag, setFaceCropDrag] = useState<{ startX: number; startY: number; dragging: boolean } | null>(null);
   const [isJobCompleteModalOpen, setIsJobCompleteModalOpen] = useState(false);
 
   // Expanded tab state
@@ -158,7 +160,6 @@ export default function App() {
   // Refs
   const abortControllerRef = useRef<AbortController | null>(null);
   const maskCanvasRef = useRef<HTMLCanvasElement>(null);
-  const faceCanvasRef = useRef<HTMLCanvasElement>(null);
   const audioPlayerRef = useRef<HTMLAudioElement>(null);
 
   useEffect(() => {
@@ -178,17 +179,11 @@ export default function App() {
     img.src = sceneRef;
   };
 
-  const faceCanvasCallback = (node: HTMLCanvasElement | null) => {
-    (faceCanvasRef as any).current = node;
-    if (!node || !faceEditSource) return;
-    const img = new Image();
-    img.onload = () => {
-      node.width = img.width;
-      node.height = img.height;
-      const ctx = node.getContext('2d');
-      if (ctx) ctx.drawImage(img, 0, 0);
-    };
-    img.src = faceEditSource;
+  const faceImgRef = useRef<HTMLImageElement>(null);
+
+  const faceImgCallback = (node: HTMLImageElement | null) => {
+    (faceImgRef as any).current = node;
+    if (node) { setFaceCrop(null); setFaceCropDrag(null); }
   };
 
   // --- HELPERS ---
@@ -2282,10 +2277,10 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      {/* FACE MODAL */}
+      {/* FACE CROP MODAL */}
       <AnimatePresence>
-        {isFaceModalOpen && (
-          <motion.div 
+        {isFaceModalOpen && faceEditSource && (
+          <motion.div
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             className="fixed inset-0 z-[100] bg-black/95 backdrop-blur-xl flex flex-col"
           >
@@ -2295,39 +2290,100 @@ export default function App() {
                   <Camera className="w-6 h-6 text-black" />
                 </div>
                 <div>
-                  <h2 className="text-xl font-bold">Yüz Referansı Editörü</h2>
-                  <p className="text-[10px] text-zinc-500 uppercase tracking-widest">Karakterin Yüzünü Sabitle</p>
+                  <h2 className="text-xl font-bold">Yüz Kırpma</h2>
+                  <p className="text-[10px] text-zinc-500 uppercase tracking-widest">Yüz alanını seçmek için sürükleyin</p>
                 </div>
               </div>
               <div className="flex items-center gap-4">
-                <button 
+                {faceCrop && <button onClick={() => { setFaceCrop(null); setFaceCropDrag(null); }} className="px-4 py-3 bg-white/10 hover:bg-white/20 text-white font-bold rounded-xl uppercase text-xs tracking-widest transition-all"><RotateCcw className="w-4 h-4 inline mr-2" />Sıfırla</button>}
+                <button
                   onClick={() => {
-                    const canvas = faceCanvasRef.current;
-                    if (canvas) {
-                      if (activeTab === 'story') {
-                        setStoryCharRef(canvas.toDataURL('image/png'));
-                      } else {
-                        setCharRef(canvas.toDataURL('image/png'));
-                      }
-                      setIsFaceModalOpen(false);
-                      setFaceEditSource(null);
-                      logMessage('SİSTEM', 'Yüz referansı güncellendi.', 'success');
+                    if (!faceEditSource) return;
+                    const img = faceImgRef.current;
+                    if (!img) return;
+                    const canvas = document.createElement('canvas');
+                    const naturalW = img.naturalWidth;
+                    const naturalH = img.naturalHeight;
+                    const displayW = img.clientWidth;
+                    const displayH = img.clientHeight;
+                    const scaleX = naturalW / displayW;
+                    const scaleY = naturalH / displayH;
+                    if (faceCrop) {
+                      canvas.width = Math.round(faceCrop.w * scaleX);
+                      canvas.height = Math.round(faceCrop.h * scaleY);
+                      const ctx = canvas.getContext('2d');
+                      if (ctx) ctx.drawImage(img, Math.round(faceCrop.x * scaleX), Math.round(faceCrop.y * scaleY), canvas.width, canvas.height, 0, 0, canvas.width, canvas.height);
+                    } else {
+                      canvas.width = naturalW;
+                      canvas.height = naturalH;
+                      const ctx = canvas.getContext('2d');
+                      if (ctx) ctx.drawImage(img, 0, 0);
                     }
+                    const dataUrl = canvas.toDataURL('image/png');
+                    if (activeTab === 'story') { setStoryCharRef(dataUrl); } else { setCharRef(dataUrl); }
+                    setIsFaceModalOpen(false);
+                    setFaceEditSource(null);
+                    setFaceCrop(null);
+                    logMessage('SİSTEM', 'Yüz referansı güncellendi.', 'success');
                   }}
                   className="px-8 py-3 bg-emerald-500 hover:bg-emerald-400 text-black font-bold rounded-xl uppercase text-xs tracking-widest transition-all"
                 >
-                  Yüzü Kaydet
+                  {faceCrop ? 'Kırpılanı Kaydet' : 'Tamamını Kaydet'}
                 </button>
-                <button onClick={() => { setIsFaceModalOpen(false); setFaceEditSource(null); }} className="p-3 hover:bg-white/10 rounded-full transition-colors"><X className="w-6 h-6" /></button>
+                <button onClick={() => { setIsFaceModalOpen(false); setFaceEditSource(null); setFaceCrop(null); }} className="p-3 hover:bg-white/10 rounded-full transition-colors"><X className="w-6 h-6" /></button>
               </div>
             </div>
             <div className="flex-1 flex items-center justify-center p-8 overflow-hidden">
-               <div className="relative glass-panel p-2">
-                  <canvas
-                    ref={faceCanvasCallback}
-                    className="max-w-full max-h-[70vh] bg-black rounded-lg"
-                  />
-               </div>
+              <div className="relative glass-panel p-2 select-none"
+                onMouseDown={(e) => {
+                  const rect = faceImgRef.current?.getBoundingClientRect();
+                  if (!rect) return;
+                  const x = e.clientX - rect.left;
+                  const y = e.clientY - rect.top;
+                  if (x < 0 || y < 0 || x > rect.width || y > rect.height) return;
+                  setFaceCropDrag({ startX: x, startY: y, dragging: true });
+                  setFaceCrop(null);
+                }}
+                onMouseMove={(e) => {
+                  if (!faceCropDrag?.dragging) return;
+                  const rect = faceImgRef.current?.getBoundingClientRect();
+                  if (!rect) return;
+                  const curX = Math.max(0, Math.min(e.clientX - rect.left, rect.width));
+                  const curY = Math.max(0, Math.min(e.clientY - rect.top, rect.height));
+                  const x = Math.min(faceCropDrag.startX, curX);
+                  const y = Math.min(faceCropDrag.startY, curY);
+                  const w = Math.abs(curX - faceCropDrag.startX);
+                  const h = Math.abs(curY - faceCropDrag.startY);
+                  if (w > 5 && h > 5) setFaceCrop({ x, y, w, h });
+                }}
+                onMouseUp={() => { if (faceCropDrag) setFaceCropDrag({ ...faceCropDrag, dragging: false }); }}
+                onMouseLeave={() => { if (faceCropDrag?.dragging) setFaceCropDrag({ ...faceCropDrag, dragging: false }); }}
+              >
+                <img
+                  ref={faceImgCallback}
+                  src={faceEditSource}
+                  className="max-w-full max-h-[70vh] bg-black rounded-lg"
+                  draggable={false}
+                />
+                {faceCrop && (
+                  <>
+                    <div className="absolute inset-0 rounded-lg pointer-events-none" style={{
+                      background: `linear-gradient(to right, rgba(0,0,0,0.6) ${(faceCrop.x / (faceImgRef.current?.clientWidth || 1)) * 100}%, transparent ${(faceCrop.x / (faceImgRef.current?.clientWidth || 1)) * 100}%, transparent ${((faceCrop.x + faceCrop.w) / (faceImgRef.current?.clientWidth || 1)) * 100}%, rgba(0,0,0,0.6) ${((faceCrop.x + faceCrop.w) / (faceImgRef.current?.clientWidth || 1)) * 100}%)`
+                    }} />
+                    <div className="absolute pointer-events-none border-2 border-emerald-400 rounded" style={{
+                      left: `calc(0.5rem + ${faceCrop.x}px)`,
+                      top: `calc(0.5rem + ${faceCrop.y}px)`,
+                      width: `${faceCrop.w}px`,
+                      height: `${faceCrop.h}px`,
+                      boxShadow: '0 0 0 9999px rgba(0,0,0,0.5)'
+                    }} />
+                    <div className="absolute pointer-events-none text-emerald-400 text-[10px] font-bold" style={{
+                      left: `calc(0.5rem + ${faceCrop.x}px)`,
+                      top: `calc(0.5rem + ${faceCrop.y - 18}px)`,
+                    }}>{Math.round(faceCrop.w)} x {Math.round(faceCrop.h)}</div>
+                  </>
+                )}
+              </div>
             </div>
           </motion.div>
         )}
