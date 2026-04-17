@@ -38,7 +38,6 @@ import * as mammoth from 'mammoth';
 import * as pdfjsLib from 'pdfjs-dist';
 import { PERSONAS, STYLES } from './constants';
 
-
 // PDF.js Worker Setup
 pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
 
@@ -123,8 +122,6 @@ export default function App() {
   // Expanded tab state
   const [expandedTab, setExpandedTab] = useState<'manual' | 'story' | 'audio' | 'cinema' | null>(null);
 
-
-
   // Story State
   const [storyText, setStoryText] = useState<string | null>(null);
   const [storyFileName, setStoryFileName] = useState('');
@@ -170,7 +167,7 @@ export default function App() {
   const abortControllerRef = useRef<AbortController | null>(null);
   const maskCanvasRef = useRef<HTMLCanvasElement>(null);
   const faceCanvasRef = useRef<HTMLCanvasElement>(null);
-
+  const audioPlayerRef = useRef<HTMLAudioElement>(null);
 
   useEffect(() => {
     const checkKey = async () => {
@@ -183,9 +180,16 @@ export default function App() {
   }, []);
 
   const handleOpenKeySelector = async () => {
-    if (window.aistudio?.openSelectKey) {
-      await window.aistudio.openSelectKey();
-      setHasSelectedKey(true);
+    try {
+      if (window.aistudio && window.aistudio.openSelectKey) {
+        await window.aistudio.openSelectKey();
+        setHasSelectedKey(true);
+      } else {
+        alert("API Anahtarı seçici sadece AI Studio önizleme penceresinde çalışır. Lütfen uygulamayı yeni sekmede değil, AI Studio içindeki önizleme penceresinde kullanın.");
+      }
+    } catch (error: any) {
+      console.error("Key selector error:", error);
+      alert("API Anahtarı seçilirken bir hata oluştu: " + error.message);
     }
   };
 
@@ -348,14 +352,13 @@ export default function App() {
   };
 
   const fetchPromptFromGemini = async (dreamText: string, personaKey: string) => {
+    const activeKey = getActiveApiKey();
     const personaPrompt = personaKey ? (Object.values(PERSONAS).flatMap(c => Object.entries(c)).find(([k]) => k === personaKey)?.[1] as any)?.prompt : "Standard visual interpretation.";
 
-    const instruction = `You are an expert prompt engineer. User Input: "${dreamText}" ${personaPrompt}
+    const instruction = `You are an expert prompt engineer. User Input: "${dreamText}" ${personaPrompt} 
     Task: Convert into high-quality Stable Diffusion style prompt in English and Turkish explanation.
     Output JSON: { "english_prompt": "...", "turkish_explanation": "..." }`;
 
-    logMessage('MODEL', 'Gemini / gemini-3-flash-preview — prompt üretimi', 'info');
-    const activeKey = getActiveApiKey();
     const ai = new GoogleGenAI({ apiKey: activeKey });
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
@@ -426,7 +429,7 @@ export default function App() {
       styleName: effStyle ? "Stil" : "Yok",
       groupId: settings.groupId || null,
       groupName: settings.groupName || null,
-      aspectRatio: effectiveAspectRatio,
+      aspectRatio: effectiveAspectRatio
     };
 
     setImageQueue(prev => [item, ...prev]);
@@ -459,7 +462,6 @@ export default function App() {
         baseInput = await prepareCanvasWithRatio(baseInput, item.aspectRatio);
       }
 
-      logMessage('MODEL', 'Gemini / gemini-2.5-flash-image', 'info');
       const result = await callGeminiAPI(item.cleanPrompt, baseInput, item.charRefImage, abortControllerRef.current.signal);
       
       setImageQueue(prev => prev.map(i => i.id === item.id ? { ...i, status: 'completed', resultBase64: result } : i));
@@ -470,7 +472,6 @@ export default function App() {
         const stylePrompt = `Apply ${item.styleConfig.prompt} style to the provided image. Maintain the original content: ${item.originalPromptText}`;
         createQueueItem(stylePrompt, `${item.displayName} (Stilize)`, { mode: 'direct' }, item.meta, false, { refImage: result });
       }
-
 
     } catch (err: any) {
       if (err.name === 'AbortError') {
@@ -493,8 +494,6 @@ export default function App() {
   // --- ACTIONS ---
 
   const handleGenerateManual = async () => {
-    const effectiveAr = aspectRatio === 'manual' ? `manual:${manualAr.width}:${manualAr.height}` : aspectRatio;
-
     if (genMode === 'maxi') {
       setIsMaxiModalOpen(true);
       return;
@@ -504,7 +503,7 @@ export default function App() {
       logMessage('MULTI', `${imgCount} varyasyon üretiliyor...`, 'info');
       for (let i = 0; i < imgCount; i++) {
         const result = await fetchPromptFromGemini(requestInput, selectedPersona);
-        createQueueItem(result.english_prompt, `Varyasyon #${i + 1}`, { style: selectedStyle, aspectRatio: effectiveAr }, { source_text: requestInput, turkish_explanation: result.turkish_explanation }, i === 0);
+        createQueueItem(result.english_prompt, `Varyasyon #${i + 1}`, { style: selectedStyle }, { source_text: requestInput, turkish_explanation: result.turkish_explanation }, i === 0);
       }
       return;
     }
@@ -514,16 +513,15 @@ export default function App() {
       logMessage('SİSTEM', 'Prompt üretiliyor...', 'info');
       const result = await fetchPromptFromGemini(requestInput, selectedPersona);
       setPromptInput(result.english_prompt);
-      createQueueItem(result.english_prompt, null, { style: selectedStyle, aspectRatio: effectiveAr }, { source_text: requestInput, turkish_explanation: result.turkish_explanation });
+      createQueueItem(result.english_prompt, null, { style: selectedStyle }, { source_text: requestInput, turkish_explanation: result.turkish_explanation });
     } else {
-      createQueueItem(promptInput, null, { style: selectedStyle, aspectRatio: effectiveAr });
+      createQueueItem(promptInput, null, { style: selectedStyle });
     }
   };
 
   const handleStoryStart = async () => {
     if (!storyText) return;
     logMessage('SENARYO', 'Metin analiz ediliyor...', 'info');
-    logMessage('MODEL', 'Gemini / gemini-3-flash-preview — sahne çıkarımı', 'info');
     
     try {
       const ai = new GoogleGenAI({ apiKey: getActiveApiKey() });
@@ -531,6 +529,7 @@ export default function App() {
       const personaPrompt = storyPersona ? (Object.values(PERSONAS).flatMap(c => Object.entries(c)).find(([k]) => k === storyPersona)?.[1] as any)?.prompt : "";
       
       const instruction = `Analyze this story and extract visual scenes. 
+      CRITICAL INSTRUCTION: You MUST generate exactly ONE scene for EACH distinct point, sentence, or item in the provided text. Do not group them. If there are 11 points, there MUST be 11 scenes.
       Story: ${editableStoryText}
       ${storyDream ? `Additional User Dream/Details: ${storyDream}` : ''}
       ${personaPrompt ? `Apply this persona/style guide to the generated prompts: ${personaPrompt}` : ''}
@@ -572,19 +571,10 @@ export default function App() {
     if (!cinemaSceneRef) return;
     setIsCinemaAnalyzing(true);
     try {
-      const cinemaPrompt = "Analyze this scene and suggest 10 cinematic camera angles. Output JSON array of objects with shot_type, shot_name_tr, english_prompt, turkish_explanation, is_char_visible, shot_icon.";
-      logMessage('MODEL', 'Gemini / gemini-3-flash-preview — sahne analizi', 'info');
       const ai = new GoogleGenAI({ apiKey: getActiveApiKey() });
-
-      let mimeType = "image/jpeg";
-      if (cinemaSceneRef.startsWith("data:image/png")) mimeType = "image/png";
-
       const response = await ai.models.generateContent({
         model: 'gemini-3-flash-preview',
-        contents: [
-          { text: cinemaPrompt },
-          { inlineData: { mimeType, data: cinemaSceneRef.split(',')[1] } }
-        ],
+        contents: "Analyze this scene and suggest 10 cinematic camera angles. Output JSON array of objects with shot_type, shot_name_tr, english_prompt, turkish_explanation, is_char_visible, shot_icon.",
         config: { responseMimeType: "application/json" }
       });
       const shots = JSON.parse(response.text || '[]');
@@ -607,9 +597,12 @@ export default function App() {
   const handleDownloadAll = async () => {
     const zip = new JSZip();
     const completed = imageQueue.filter(i => i.status === 'completed' && i.resultBase64);
-    completed.forEach(item => {
+    completed.forEach((item, index) => {
       const data = item.resultBase64!.split(',')[1];
-      zip.file(`${item.displayName.replace(/\s+/g, '_')}.png`, data, { base64: true });
+      // Ensure unique filenames by appending the index and a short ID
+      const safeName = item.displayName.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+      const uniqueName = `${index + 1}_${safeName}_${item.id.substring(0, 4)}.png`;
+      zip.file(uniqueName, data, { base64: true });
     });
     const content = await zip.generateAsync({ type: 'blob' });
     const link = document.createElement('a');
@@ -658,12 +651,11 @@ export default function App() {
   const runAudioPipeline = async () => {
     if (!audioFile) return;
     setAudioStepStatus(prev => ({ ...prev, 2: 'processing' }));
-
+    
     try {
       const ai = new GoogleGenAI({ apiKey: getActiveApiKey() });
-
-      // 1. Transcribe via Gemini
-      logMessage('MODEL', 'Gemini / gemini-3-flash-preview — ses transkripsiyon', 'info');
+      
+      // 1. Transcribe
       const transResponse = await ai.models.generateContent({
         model: 'gemini-3-flash-preview',
         contents: [
@@ -676,7 +668,6 @@ export default function App() {
       setAudioStepStatus(prev => ({ ...prev, 2: 'done', 3: 'processing' }));
 
       // 2. Scenario
-      logMessage('MODEL', 'Gemini / gemini-3-flash-preview — senaryo üretimi', 'info');
       const scenResponse = await ai.models.generateContent({
         model: 'gemini-3-flash-preview',
         contents: `Create a visual storyboard from this transcript. Output JSON array of scenes. Transcript: ${transcript}`,
@@ -687,19 +678,22 @@ export default function App() {
       setAudioStepStatus(prev => ({ ...prev, 3: 'done', 4: 'processing' }));
 
       // 3. Prompts
-      logMessage('MODEL', 'Gemini / gemini-3-flash-preview — prompt listesi üretimi', 'info');
       const promptResponse = await ai.models.generateContent({
         model: 'gemini-3-flash-preview',
         contents: `Convert these scenes into English image prompts. Output JSON array of strings. Scenes: ${scenario}`,
         config: { responseMimeType: "application/json" }
       });
-      const prompts: string[] = JSON.parse(promptResponse.text || '[]');
+      const prompts = JSON.parse(promptResponse.text || '[]');
       setAudioPrompts(prompts);
       setAudioStepStatus(prev => ({ ...prev, 4: 'done', 5: 'processing' }));
 
-      // 4. Images — add to queue for proper processing
+      // 4. Images
+      const images: string[] = [];
       for (const p of prompts) {
-        createQueueItem(p, `Audio Scene`, {}, { source_text: "Audio Pipeline" }, false);
+        const img = await callGeminiAPI(p);
+        images.push(img);
+        setAudioImages([...images]);
+        createQueueItem(p, `🎵 Audio Scene ${images.length}`, {}, { source_text: "Audio Pipeline" }, false);
       }
       setAudioStepStatus(prev => ({ ...prev, 5: 'done' }));
 
@@ -785,17 +779,19 @@ export default function App() {
 
         {/* API KEY */}
         <div className="p-3 border-t border-white/5 bg-black/20 space-y-3">
-          {!hasSelectedKey && (
-            <button
-              onClick={handleOpenKeySelector}
-              className="w-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 rounded-lg px-3 py-2 text-[10px] font-bold uppercase tracking-widest hover:bg-emerald-500/20 transition-all flex items-center justify-center gap-2"
-            >
-              <Sparkles className="w-3 h-3" /> Ücretli API Anahtarı Seç
-            </button>
-          )}
-          <input
-            type="password"
-            placeholder="Manuel API Key (Opsiyonel)..."
+          <button 
+            onClick={handleOpenKeySelector}
+            className={`w-full border rounded-lg px-3 py-2 text-[10px] font-bold uppercase tracking-widest transition-all flex items-center justify-center gap-2 ${
+              hasSelectedKey 
+                ? "bg-white/5 border-white/10 text-white/50 hover:bg-white/10 hover:text-white" 
+                : "bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20"
+            }`}
+          >
+            <Sparkles className="w-3 h-3" /> {hasSelectedKey ? "API Anahtarını Değiştir" : "Ücretli API Anahtarı Seç"}
+          </button>
+          <input 
+            type="password" 
+            placeholder="Manuel API Key (Opsiyonel)..." 
             value={customApiKey}
             onChange={(e) => setCustomApiKey(e.target.value)}
             className="w-full bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-[10px] focus:outline-none focus:border-emerald-500 transition-colors"
@@ -838,7 +834,15 @@ export default function App() {
                       referrerPolicy="no-referrer"
                     />
                     <div className="absolute bottom-4 right-4 flex gap-2 opacity-0 group-hover:opacity-100 transition-all translate-y-2 group-hover:translate-y-0">
-                      <button className="p-3 bg-black/60 backdrop-blur-xl border border-white/10 rounded-xl hover:bg-emerald-500 hover:text-black transition-all">
+                      <button 
+                        onClick={() => {
+                          const link = document.createElement('a');
+                          link.href = selectedItem.resultBase64!;
+                          link.download = `${selectedItem.displayName.replace(/\s+/g, '_')}.png`;
+                          link.click();
+                        }}
+                        className="p-3 bg-black/60 backdrop-blur-xl border border-white/10 rounded-xl hover:bg-emerald-500 hover:text-black transition-all"
+                      >
                         <Download className="w-5 h-5" />
                       </button>
                       <button className="p-3 bg-black/60 backdrop-blur-xl border border-white/10 rounded-xl hover:bg-white hover:text-black transition-all">
@@ -1520,15 +1524,14 @@ export default function App() {
                 <p className="text-zinc-700 italic">Sistem hazır...</p>
               ) : (
                 logs.map(log => (
-                  <div key={log.id} className={cn("flex gap-2 border-l-2 pl-2 py-0.5",
-                    log.type === 'error' ? "border-red-500 text-red-400 bg-red-500/5" :
-                    log.type === 'success' ? "border-green-500 text-green-400 bg-green-500/5" :
-                    log.sender === 'MODEL' ? "border-violet-500 text-violet-400 bg-violet-500/5" :
+                  <div key={log.id} className={cn("flex gap-2 border-l-2 pl-2 py-0.5", 
+                    log.type === 'error' ? "border-red-500 text-red-400 bg-red-500/5" : 
+                    log.type === 'success' ? "border-green-500 text-green-400 bg-green-500/5" : 
                     "border-blue-500 text-blue-400 bg-blue-500/5"
                   )}>
                     <span className="opacity-30 shrink-0">{log.time}</span>
                     <span className="font-bold shrink-0">{log.sender}</span>
-                    <span className={cn("break-all", log.sender === 'MODEL' ? "text-violet-300 font-mono text-[9px]" : "text-zinc-300")}>{log.msg}</span>
+                    <span className="text-zinc-300 break-all">{log.msg}</span>
                   </div>
                 ))
               )}
@@ -1855,7 +1858,19 @@ export default function App() {
                     </div>
                   </div>
                   <div className="col-span-2 flex flex-col gap-3">
-                    <label className="text-[10px] font-bold text-purple-400 uppercase tracking-widest">Metin İçeriği</label>
+                    <div className="flex items-center justify-between">
+                      <label className="text-[10px] font-bold text-purple-400 uppercase tracking-widest">Metin İçeriği</label>
+                      {storyText && editableStoryText !== storyText && (
+                        <button
+                          onClick={() => setEditableStoryText(storyText)}
+                          className="text-[10px] text-zinc-400 hover:text-purple-400 transition-colors flex items-center gap-1"
+                          title="Orijinal Metne Dön"
+                        >
+                          <RotateCcw className="w-3 h-3" />
+                          Orijinal Metne Dön
+                        </button>
+                      )}
+                    </div>
                     <textarea
                       value={editableStoryText}
                       onChange={(e) => setEditableStoryText(e.target.value)}

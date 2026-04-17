@@ -29,7 +29,7 @@
 
 ```
 src/
-  App.tsx        # Tüm uygulama — tek büyük bileşen
+  App.tsx        # Tüm uygulama — tek büyük bileşen (~700+ satır)
   constants.ts   # PERSONAS ve STYLES sabitleri
   main.tsx       # React root render
   index.css      # Global stiller
@@ -42,13 +42,13 @@ metadata.json    # App meta (AI Studio için)
 
 ## Temel Mimari
 
-### API Katmanı (Sadece Gemini)
+### API Katmanı
 
 ```typescript
-// Görsel üretim — gemini-2.5-flash-image modeli (fallback: imagen-4.0-generate-001)
+// Görsel üretim — gemini-2.5-flash-image modeli
 callGeminiAPI(fullPrompt, inputImageBase64?, charRefBase64?, signal?)
 
-// Prompt geliştirme, sahne analizi, transkripsiyon — gemini-3-flash-preview modeli
+// Prompt geliştirme — gemini-3-flash-preview modeli
 fetchPromptFromGemini(dreamText, personaKey)
 
 // Aktif API key (custom key > env key)
@@ -137,7 +137,7 @@ npm run preview      # Build önizleme
 - **State:** Global store ekleme; React hooks yeterli.
 - **Loglama:** `logMessage()` kullan — `console.log` değil.
 - **Kuyruk ekleme:** `imageQueue.unshift()` — `push()` değil.
-- **API:** Tüm AI işlemleri Gemini API üzerinden. Modeller: `gemini-2.5-flash-image` (görsel), `gemini-3-flash-preview` (metin/analiz).
+- **API model isimleri:** Mevcut model isimlerini koru (`gemini-2.5-flash-image`, `gemini-3-flash-preview`).
 - **Persona/Style eklemek:** `src/constants.ts` dosyasını düzenle.
 - **TypeScript:** `any` tipten kaçın; mümkünse `interface` veya `type` tanımla.
 - **UI:** Tailwind CSS class'ları kullan, inline style'dan kaçın.
